@@ -3,233 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Content-Based Movie Recommender</title>
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        
-        body {
-            background-color: #1a1a2e;
-            color: #e6e6e6;
-            line-height: 1.6;
-            padding: 20px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        
-        header {
-            text-align: center;
-            margin-bottom: 30px;
-            padding: 20px;
-            background: linear-gradient(135deg, #16213e 0%, #0f3460 100%);
-            border-radius: 10px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
-        }
-        
-        h1 {
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-            color: #4cc9f0;
-            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
-        }
-        
-        .instructions {
-            font-size: 1.1rem;
-            margin-bottom: 25px;
-            color: #a1c6ea;
-            max-width: 800px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-        
-        .container {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-        
-        .selection-area {
-            background: #16213e;
-            padding: 25px;
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-        }
-        
-        .input-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 15px;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        select {
-            flex: 1;
-            min-width: 300px;
-            padding: 12px 15px;
-            border-radius: 8px;
-            border: none;
-            background-color: #0f3460;
-            color: #e6e6e6;
-            font-size: 1rem;
-            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
-        }
-        
-        button {
-            padding: 12px 25px;
-            border: none;
-            border-radius: 8px;
-            background: linear-gradient(135deg, #4cc9f0 0%, #3a86ff 100%);
-            color: white;
-            font-size: 1rem;
-            font-weight: bold;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-        }
-        
-        button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
-        }
-        
-        button:active {
-            transform: translateY(0);
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-        }
-        
-        .results-area {
-            background: #16213e;
-            padding: 25px;
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-        }
-        
-        .result-box {
-            min-height: 200px;
-            padding: 20px;
-            background-color: #0f3460;
-            border-radius: 8px;
-            margin-top: 15px;
-        }
-        
-        .movie-card {
-            background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-            transition: transform 0.2s;
-        }
-        
-        .movie-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
-        }
-        
-        .movie-title {
-            font-size: 1.2rem;
-            color: #4cc9f0;
-            margin-bottom: 8px;
-        }
-        
-        .movie-genres {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 10px;
-        }
-        
-        .genre-tag {
-            background-color: #3a86ff;
-            color: white;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-        }
-        
-        .similarity-score {
-            display: inline-block;
-            float: right;
-            background-color: #4cc9f0;
-            color: #0f3460;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-weight: bold;
-        }
-        
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #a1c6ea;
-        }
-        
-        .spinner {
-            border: 4px solid rgba(255, 255, 255, 0.3);
-            border-radius: 50%;
-            border-top: 4px solid #4cc9f0;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 20px;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        footer {
-            text-align: center;
-            margin-top: 30px;
-            padding: 20px;
-            color: #a1c6ea;
-            font-size: 0.9rem;
-        }
-        
-        @media (max-width: 600px) {
-            .input-group {
-                flex-direction: column;
-            }
-            
-            select {
-                min-width: unset;
-                width: 100%;
-            }
-        }
-    </style>
+    <title>Simple Movie Recommender</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <header>
-        <h1>Content-Based Movie Recommender</h1>
-        <p class="instructions">Select a movie you like, and we'll find similar ones for you based on genre similarity using the Jaccard index!</p>
-    </header>
-    
     <div class="container">
-        <section class="selection-area">
-            <div class="input-group">
+        <header>
+            <h1>Simple Movie Recommender</h1>
+            <p class="instructions">Select a movie you like, and we'll find the most similar one for you!</p>
+        </header>
+        
+        <main>
+            <div class="selection-area">
                 <select id="movie-select">
                     <option value="">-- Select a Movie --</option>
                 </select>
-                <button id="recommend-btn">Get Recommendations</button>
+                <button id="recommend-btn">Get Recommendation</button>
             </div>
-        </section>
-        
-        <section class="results-area">
-            <h2>Recommendations</h2>
-            <div id="result-box" class="result-box">
-                <p id="result">Please select a movie to get recommendations.</p>
+            
+            <div class="results-area">
+                <h2>Recommendation</h2>
+                <div id="result-box" class="result-box">
+                    <p id="result">Please select a movie to get a recommendation.</p>
+                </div>
             </div>
-        </section>
+        </main>
     </div>
-    
-    <footer>
-        <p>Content-Based Movie Recommender System &copy; 2025</p>
-    </footer>
 
     <script src="data.js"></script>
     <script src="script.js"></script>
