@@ -1,0 +1,164 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    background-color: #f5f5f5;
+    color: #333;
+    line-height: 1.6;
+    padding: 20px;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    background-color: white;
+    border-radius: 10px;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+    padding: 20px;
+}
+
+header {
+    text-align: center;
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #eee;
+}
+
+h1 {
+    font-size: 2rem;
+    margin-bottom: 10px;
+    color: #2c3e50;
+}
+
+.instructions {
+    color: #7f8c8d;
+    margin-bottom: 20px;
+}
+
+.selection-area {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-bottom: 30px;
+}
+
+select, button {
+    padding: 12px;
+    border-radius: 5px;
+    border: 1px solid #ddd;
+    font-size: 1rem;
+}
+
+select {
+    background-color: #f9f9f9;
+}
+
+button {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+button:hover {
+    background-color: #2980b9;
+}
+
+.results-area h2 {
+    margin-bottom: 15px;
+    color: #2c3e50;
+}
+
+.result-box {
+    background-color: #f9f9f9;
+    border-radius: 5px;
+    padding: 20px;
+    min-height: 150px;
+    border: 1px solid #eee;
+}
+
+.movie-pair {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.movie-card {
+    background-color: white;
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    border-left: 4px solid #3498db;
+}
+
+.original-movie {
+    border-left-color: #2ecc71;
+}
+
+.recommended-movie {
+    border-left-color: #e74c3c;
+}
+
+.movie-title {
+    font-size: 1.2rem;
+    font-weight: bold;
+    margin-bottom: 10px;
+    color: #2c3e50;
+}
+
+.movie-genres {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.genre-tag {
+    background-color: #ecf0f1;
+    color: #7f8c8d;
+    padding: 4px 8px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+}
+
+.connection {
+    text-align: center;
+    font-weight: bold;
+    color: #3498db;
+    margin: 10px 0;
+}
+
+.similarity {
+    margin-top: 10px;
+    font-style: italic;
+    color: #7f8c8d;
+    text-align: center;
+}
+
+@media (min-width: 768px) {
+    .selection-area {
+        flex-direction: row;
+        align-items: center;
+    }
+    
+    select {
+        flex: 1;
+    }
+    
+    button {
+        width: auto;
+    }
+    
+    .movie-pair {
+        flex-direction: row;
+        justify-content: space-between;
+    }
+    
+    .movie-card {
+        width: 48%;
+    }
+}
