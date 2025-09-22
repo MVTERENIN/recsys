@@ -41,6 +41,7 @@ function populateMoviesDropdown() {
 }
 
 // Main recommendation function
+
 function getRecommendations() {
     const resultElement = document.getElementById('result');
     
@@ -70,24 +71,37 @@ function getRecommendations() {
         // Use setTimeout to allow the UI to update before heavy computation
         setTimeout(() => {
             try {
-                // Step 3: Prepare for similarity calculation
+                // Step 3: Get all unique genres across all movies
+                const allGenres = new Set();
+                movies.forEach(movie => {
+                    movie.genres.forEach(genre => allGenres.add(genre));
+                });
+                const genreList = Array.from(allGenres);
+                
+                // Step 4: Create genre vectors for cosine similarity
                 const likedGenres = new Set(likedMovie.genres);
+                const likedVector = genreList.map(genre => likedGenres.has(genre) ? 1 : 0);
+                
                 const candidateMovies = movies.filter(movie => movie.id !== likedMovie.id);
                 
-                // Step 4: Calculate Jaccard similarity scores
+                // Step 5: Calculate cosine similarity scores
                 const scoredMovies = candidateMovies.map(candidate => {
                     const candidateGenres = new Set(candidate.genres);
+                    const candidateVector = genreList.map(genre => candidateGenres.has(genre) ? 1 : 0);
                     
-                    // Calculate intersection
-                    const intersection = new Set(
-                        [...likedGenres].filter(genre => candidateGenres.has(genre))
-                    );
+                    // Calculate dot product
+                    let dotProduct = 0;
+                    for (let i = 0; i < genreList.length; i++) {
+                        dotProduct += likedVector[i] * candidateVector[i];
+                    }
                     
-                    // Calculate union
-                    const union = new Set([...likedGenres, ...candidateGenres]);
+                    // Calculate magnitudes
+                    const likedMagnitude = Math.sqrt(likedVector.reduce((sum, val) => sum + val * val, 0));
+                    const candidateMagnitude = Math.sqrt(candidateVector.reduce((sum, val) => sum + val * val, 0));
                     
-                    // Calculate Jaccard similarity
-                    const score = union.size > 0 ? intersection.size / union.size : 0;
+                    // Calculate cosine similarity
+                    const score = (likedMagnitude * candidateMagnitude) > 0 ? 
+                        dotProduct / (likedMagnitude * candidateMagnitude) : 0;
                     
                     return {
                         ...candidate,
@@ -95,13 +109,13 @@ function getRecommendations() {
                     };
                 });
                 
-                // Step 5: Sort by score in descending order
+                // Step 6: Sort by score in descending order
                 scoredMovies.sort((a, b) => b.score - a.score);
                 
-                // Step 6: Select top recommendations
+                // Step 7: Select top recommendations
                 const topRecommendations = scoredMovies.slice(0, 2);
                 
-                // Step 7: Display results
+                // Step 8: Display results
                 if (topRecommendations.length > 0) {
                     const recommendationTitles = topRecommendations.map(movie => movie.title);
                     resultElement.textContent = `Because you liked "${likedMovie.title}", we recommend: ${recommendationTitles.join(', ')}`;
