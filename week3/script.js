@@ -3,6 +3,8 @@ let isTraining = false;
 
 window.onload = async function() {
     try {
+        console.log('Initializing application...');
+        
         // Load and parse data
         await loadData();
         
@@ -16,7 +18,7 @@ window.onload = async function() {
     } catch (error) {
         console.error('Initialization error:', error);
         document.getElementById('result').textContent = 
-            'Error loading data or training model. Check console for details.';
+            `Error: ${error.message}`;
         document.getElementById('result').className = 'result error';
     }
 };
@@ -25,12 +27,14 @@ function populateUserDropdown() {
     const userSelect = document.getElementById('user-select');
     userSelect.innerHTML = '';
     
+    // Users are numbered from 1 to numUsers
     for (let i = 1; i <= numUsers; i++) {
         const option = document.createElement('option');
         option.value = i;
         option.textContent = `User ${i}`;
         userSelect.appendChild(option);
     }
+    console.log(`Populated user dropdown with ${numUsers} users`);
 }
 
 function populateMovieDropdown() {
@@ -40,9 +44,10 @@ function populateMovieDropdown() {
     movies.forEach(movie => {
         const option = document.createElement('option');
         option.value = movie.id;
-        option.textContent = movie.title;
+        option.textContent = `${movie.id}: ${movie.title}`;
         movieSelect.appendChild(option);
     });
+    console.log(`Populated movie dropdown with ${movies.length} movies`);
 }
 
 function createModel(numUsers, numMovies, latentDim = 10) {
@@ -83,9 +88,11 @@ async function trainModel() {
         resultDiv.textContent = 'Training model... This may take a minute.';
         resultDiv.className = 'result loading';
         
-        // Create model
+        console.log('Creating model...');
+        // Create model - note the dataset has 943 users and 1682 movies
         model = createModel(numUsers, numMovies, 10);
         
+        console.log('Compiling model...');
         // Compile model
         model.compile({
             optimizer: tf.train.adam(0.001),
@@ -93,6 +100,7 @@ async function trainModel() {
         });
         
         // Prepare training data
+        console.log('Preparing training data...');
         const userIds = ratings.map(r => r.userId);
         const movieIds = ratings.map(r => r.movieId);
         const ratingsValues = ratings.map(r => r.rating);
@@ -101,10 +109,12 @@ async function trainModel() {
         const movieTensor = tf.tensor2d(movieIds, [movieIds.length, 1]);
         const ratingTensor = tf.tensor2d(ratingsValues, [ratingsValues.length, 1]);
         
+        console.log(`Training on ${userIds.length} ratings...`);
+        
         // Train model
         await model.fit([userTensor, movieTensor], ratingTensor, {
             epochs: 5,
-            batchSize: 64,
+            batchSize: 128,
             validationSplit: 0.1,
             callbacks: {
                 onEpochEnd: (epoch, logs) => {
@@ -123,10 +133,12 @@ async function trainModel() {
         document.getElementById('predict-btn').disabled = false;
         isTraining = false;
         
+        console.log('Model training completed');
+        
     } catch (error) {
         console.error('Training error:', error);
         document.getElementById('result').textContent = 
-            'Error training model. Check console for details.';
+            `Error training model: ${error.message}`;
         document.getElementById('result').className = 'result error';
         isTraining = false;
     }
@@ -166,15 +178,16 @@ async function predictRating() {
         // Display result
         const selectedMovie = movies.find(m => m.id === movieId);
         resultDiv.innerHTML = `
-            <strong>Predicted Rating for "${selectedMovie.title}"</strong><br>
-            User ${userId} would rate this movie: <span style="font-size: 1.5em; color: #2c5530;">${predictedRating.toFixed(2)} / 5</span>
+            <strong>Predicted Rating</strong><br>
+            User ${userId} would rate "${selectedMovie.title}"<br>
+            <span style="font-size: 1.5em; color: #2c5530;">${predictedRating.toFixed(2)} / 5</span>
         `;
         resultDiv.className = 'result prediction';
         
     } catch (error) {
         console.error('Prediction error:', error);
         document.getElementById('result').textContent = 
-            'Error making prediction. Check console for details.';
+            `Error making prediction: ${error.message}`;
         document.getElementById('result').className = 'result error';
     }
 }
