@@ -5,14 +5,10 @@ let numMovies = 0;
 
 async function loadData() {
     try {
-        // Replace with your actual GitHub raw file URLs
-        const MOVIES_URL = 'https://raw.githubusercontent.com/MVTERENIN/recsys/week3/u.item';
-        const RATINGS_URL = 'https://raw.githubusercontent.com/MVTERENIN/recsys/week3/u.data';
-
-        console.log('Loading data from GitHub...');
+        console.log('Loading data from local files...');
         
         // Load movie data
-        const moviesResponse = await fetch(MOVIES_URL);
+        const moviesResponse = await fetch('./u.item');
         if (!moviesResponse.ok) {
             throw new Error(`Failed to load movie data: ${moviesResponse.status} ${moviesResponse.statusText}`);
         }
@@ -20,7 +16,7 @@ async function loadData() {
         parseItemData(moviesText);
 
         // Load ratings data
-        const ratingsResponse = await fetch(RATINGS_URL);
+        const ratingsResponse = await fetch('./u.data');
         if (!ratingsResponse.ok) {
             throw new Error(`Failed to load ratings data: ${ratingsResponse.status} ${ratingsResponse.statusText}`);
         }
@@ -31,7 +27,7 @@ async function loadData() {
         return { movies, ratings, numUsers, numMovies };
     } catch (error) {
         console.error('Error loading data:', error);
-        throw new Error(`Failed to load data: ${error.message}. Please check your GitHub URLs and ensure files are accessible.`);
+        throw new Error(`Failed to load data: ${error.message}. Please ensure u.item and u.data files are in the same directory.`);
     }
 }
 
