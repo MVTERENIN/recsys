@@ -199,52 +199,57 @@ class MovieLensApp {
     }
 
     async trainModel() {
-        if (this.interactions.length === 0) {
-            this.updateStatus('Please load data first');
-            return;
-        }
-
-        this.updateStatus('Initializing Two-Tower Model...');
-        
-        const numUsers = this.users.size;
-        const numItems = this.items.size;
-        const numGenres = 19; // MovieLens has 19 genres
-        const numOccupations = new Set(Array.from(this.users.values()).map(u => u.occupation)).size;
-        const numGenders = 2; // Assuming 'M' and 'F'
-
-        this.model = new TwoTowerModel(
-            numUsers,
-            numItems,
-            numGenres,
-            numOccupations,
-            numGenders,
-            {
-                embeddingDim: 32,
-                hiddenUnits: [64, 32],
-                learningRate: 0.001,
-                batchSize: 256,
-                maxInteractions: 80000
-            }
-        );
-
-        this.updateStatus('Starting training...');
-        this.lossData = [];
-        
-        const epochs = 20;
-        for (let epoch = 0; epoch < epochs; epoch++) {
-            this.updateStatus(`Training epoch ${epoch + 1}/${epochs}...`);
-            const loss = await this.model.trainEpoch(this.interactions, this.userIdMap, this.itemIdMap, this.users, this.items);
-            this.updateLossChart(loss);
-            
-            if ((epoch + 1) % 5 === 0) {
-                this.updateStatus(`Epoch ${epoch + 1} completed. Loss: ${loss.toFixed(4)}`);
-            }
-        }
-        
-        this.updateStatus('Training completed! Generating embedding visualization...');
-        await this.visualizeEmbeddings();
-        this.updateStatus('Ready for testing! Click "Test Recommendations" to see results.');
+    if (this.interactions.length === 0) {
+        this.updateStatus('Please load data first');
+        return;
     }
+
+    this.updateStatus('Initializing Two-Tower Model (optimized for speed)...');
+    
+    const numUsers = this.users.size;
+    const numItems = this.items.size;
+    const numGenres = 19;
+    const numOccupations = new Set(Array.from(this.users.values()).map(u => u.occupation)).size;
+    const numGenders = 2;
+
+    this.model = new TwoTowerModel(
+        numUsers,
+        numItems,
+        numGenres,
+        numOccupations,
+        numGenders,
+        {
+            embeddingDim: 16,  // Reduced from 32
+            hiddenUnits: [32, 16],  // Reduced from [64, 32]
+            learningRate: 0.01,  // Increased for faster convergence
+            batchSize: 512,  // Increased for efficiency
+            maxInteractions: 20000  // Use only 20K interactions instead of 80K
+        }
+    );
+
+    this.updateStatus('Starting training (optimized for speed)...');
+    this.lossData = [];
+    
+    // Reduced epochs from 20 to 8
+    const epochs = 8;
+    for (let epoch = 0; epoch < epochs; epoch++) {
+        this.updateStatus(`Training epoch ${epoch + 1}/${epochs}...`);
+        const loss = await this.model.trainEpoch(this.interactions, this.userIdMap, this.itemIdMap, this.users, this.items);
+        this.updateLossChart(loss);
+        
+        this.updateStatus(`Epoch ${epoch + 1} completed. Loss: ${loss.toFixed(4)}`);
+        
+        // Early stopping if loss is already low
+        if (loss < 0.1) {
+            this.updateStatus(`Early stopping at epoch ${epoch + 1} - loss is sufficiently low`);
+            break;
+        }
+    }
+    
+    this.updateStatus('Training completed! Generating embedding visualization...');
+    await this.visualizeEmbeddings();
+    this.updateStatus('Ready for testing! Click "Test Recommendations" to see results.');
+}
 
     async visualizeEmbeddings() {
         // Sample 200 items for visualization
