@@ -15,6 +15,11 @@ class TwoTowerModel {
         this.genderMap = { 'M': 0, 'F': 1 };
         
         this.buildModel();
+        
+        console.log("TwoTowerModel initialized", {
+            numUsers, numItems, embDim, hiddenUnits,
+            numGenres, numOccupations, numGenders, learningRate
+        });
     }
 
     buildModel() {
@@ -84,6 +89,8 @@ class TwoTowerModel {
             activation: 'linear',
             name: 'item_output'
         });
+        
+        console.log("Model architecture built successfully");
     }
 
     userTower(userIds, userFeaturesList, app) {
@@ -147,19 +154,24 @@ class TwoTowerModel {
     }
 
     async trainBatch(batchPairs, app) {
-        // Extract batch data
-        const userIds = batchPairs.map(p => p.userIndex);
-        const itemIds = batchPairs.map(p => p.itemIndex);
-        const userFeatures = batchPairs.map(p => p.userFeatures);
-        
-        // Get item features
-        const itemFeatures = itemIds.map(itemId => {
-            const itemData = app.items.get(app.indexToItemId.get(itemId));
-            return itemData.genres;
-        });
+        try {
+            // Extract batch data
+            const userIds = batchPairs.map(p => p.userIndex);
+            const itemIds = batchPairs.map(p => p.itemIndex);
+            const userFeatures = batchPairs.map(p => p.userFeatures);
+            
+            // Get item features
+            const itemFeatures = itemIds.map(itemId => {
+                const itemData = app.items.get(app.indexToItemId.get(itemId));
+                return itemData.genres;
+            });
 
-        const loss = await this.trainStep(userIds, userFeatures, itemFeatures, app);
-        return loss;
+            const loss = await this.trainStep(userIds, userFeatures, itemFeatures, app);
+            return loss;
+        } catch (error) {
+            console.error("Error in trainBatch:", error);
+            return 10.0; // Return high loss on error
+        }
     }
 
     async trainStep(userIds, userFeatures, itemFeatures, app) {
@@ -182,13 +194,19 @@ class TwoTowerModel {
             
             // Compute gradients and update
             const variables = this.getTrainableVariables();
-            const gradients = tf.grad(l => l).call(this, loss, variables);
+            const gradFunc = tf.grad(l => l);
+            const gradients = gradFunc(loss, variables);
             
             this.optimizer.applyGradients(
                 variables.map((v, i) => ({ grad: gradients[i], var: v }))
             );
             
-            return loss.dataSync()[0];
+            const lossValue = loss.dataSync()[0];
+            
+            // Cleanup
+            tf.dispose([userEmbeddings, itemEmbeddings, scores, labels, loss, ...variables, ...gradients]);
+            
+            return lossValue;
         });
     }
 
@@ -217,7 +235,7 @@ class TwoTowerModel {
             const userTensor = tf.tensor2d([userEmb]);
             const scores = [];
             
-            // Process items in smaller chunks to avoid memory issues
+            // Process items one by one to avoid memory issues
             for (let i = 0; i < itemIndices.length; i++) {
                 const itemId = app.indexToItemId.get(itemIndices[i]);
                 const itemFeatures = app.items.get(itemId).genres;
