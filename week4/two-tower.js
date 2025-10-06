@@ -1,275 +1,153 @@
+// two-tower.js - TensorFlow.js implementation of Two-Tower retrieval model with MLPs
+
+"use strict";
+
 class TwoTowerModel {
-    constructor(numUsers, numItems, embDim, hiddenUnits, numGenres, numOccupations, numGenders, learningRate) {
-        this.numUsers = numUsers;
-        this.numItems = numItems;
-        this.embDim = embDim;
-        this.hiddenUnits = hiddenUnits;
-        this.numGenres = numGenres;
-        this.numOccupations = numOccupations;
-        this.numGenders = numGenders;
-        
-        this.optimizer = tf.train.adam(learningRate);
-        
-        // Build occupation and gender mappings
-        this.occupationList = null;
-        this.genderMap = { 'M': 0, 'F': 1 };
-        
-        this.buildModel();
-        
-        console.log("TwoTowerModel initialized", {
-            numUsers, numItems, embDim, hiddenUnits,
-            numGenres, numOccupations, numGenders, learningRate
-        });
-    }
+  /*
+    TwoTowerModel implements a dual-tower architecture for retrieval:
+    - User Tower: embeddings for age, gender, occupation concatenated and passed through an MLP.
+    - Item Tower: genre embeddings passed through an MLP.
+    - Scoring: dot product of user and item embeddings.
+    - Loss: supports in-batch sampled softmax (default) or BPR pairwise loss.
+  */
 
-    buildModel() {
-        // User tower components
-        this.userIdEmbedding = tf.layers.embedding({
-            inputDim: this.numUsers,
-            outputDim: this.embDim,
-            name: 'user_id_embedding'
-        });
+  constructor(numUsers, numItems, embDim, hiddenUnits, numGenres, numOccupations, numGenders, lossType = 'softmax') {
+    this.numUsers = numUsers;
+    this.numItems = numItems;
+    this.embDim = embDim;
+    this.hiddenUnits = hiddenUnits;
+    this.numGenres = numGenres;
+    this.numOccupations = numOccupations;
+    this.numGenders = numGenders;
+    this.lossType = lossType;
 
-        this.ageNormalization = tf.layers.dense({
-            units: 1,
-            activation: 'linear',
-            useBias: true,
-            name: 'age_normalization'
-        });
+    // Embeddings for categorical features: gender, occupation
+    this.genderEmbedding = tf.variable(tf.randomNormal([numGenders, embDim], 0, 0.05), true, 'genderEmbedding');
+    this.occupationEmbedding = tf.variable(tf.randomNormal([numOccupations, embDim], 0, 0.05), true, 'occupationEmbedding');
 
-        this.genderEmbedding = tf.layers.embedding({
-            inputDim: this.numGenders,
-            outputDim: Math.max(2, Math.floor(this.embDim / 4)),
-            name: 'gender_embedding'
-        });
+    // Age embedding via dense projection instead of embedding table
+    this.ageDenseW = tf.variable(tf.randomNormal([1, embDim], 0, 0.05), true, 'ageDenseW');
+    this.ageDenseB = tf.variable(tf.zeros([embDim]), true, 'ageDenseB');
 
-        this.occupationEmbedding = tf.layers.embedding({
-            inputDim: this.numOccupations,
-            outputDim: Math.max(4, Math.floor(this.embDim / 2)),
-            name: 'occupation_embedding'
-        });
+    // Item genres embedding projection matrix to embDim (learnable)
+    this.genreEmbeddingW = tf.variable(tf.randomNormal([numGenres, embDim], 0, 0.05), true, 'genreEmbeddingW');
 
-        // User MLP layers
-        this.userLayers = [];
-        for (const units of this.hiddenUnits) {
-            this.userLayers.push(
-                tf.layers.dense({
-                    units: units,
-                    activation: 'relu',
-                    name: `user_dense_${units}`
-                })
-            );
-        }
-        this.userOutputLayer = tf.layers.dense({
-            units: this.embDim,
-            activation: 'linear',
-            name: 'user_output'
-        });
+    // User MLP - input concatenated [ageEmb, genderEmb, occupationEmb] => hidden layer => final user embedding
+    this.userMLP_W1 = tf.variable(tf.randomNormal([embDim * 3, hiddenUnits], 0, 0.1), true, 'userMLP_W1');
+    this.userMLP_b1 = tf.variable(tf.zeros([hiddenUnits]), true, 'userMLP_b1');
+    this.userMLP_W2 = tf.variable(tf.randomNormal([hiddenUnits, embDim], 0, 0.1), true, 'userMLP_W2');
+    this.userMLP_b2 = tf.variable(tf.zeros([embDim]), true, 'userMLP_b2');
 
-        // Item tower
-        this.itemProjection = tf.layers.dense({
-            units: this.embDim,
-            activation: 'linear',
-            name: 'item_projection'
-        });
+    // Item MLP - input embedded genres sum => hidden layer => final item embedding
+    this.itemMLP_W1 = tf.variable(tf.randomNormal([embDim, hiddenUnits], 0, 0.1), true, 'itemMLP_W1');
+    this.itemMLP_b1 = tf.variable(tf.zeros([hiddenUnits]), true, 'itemMLP_b1');
+    this.itemMLP_W2 = tf.variable(tf.randomNormal([hiddenUnits, embDim], 0, 0.1), true, 'itemMLP_W2');
+    this.itemMLP_b2 = tf.variable(tf.zeros([embDim]), true, 'itemMLP_b2');
+  }
 
-        // Item MLP layers
-        this.itemLayers = [];
-        for (const units of this.hiddenUnits) {
-            this.itemLayers.push(
-                tf.layers.dense({
-                    units: units,
-                    activation: 'relu',
-                    name: `item_dense_${units}`
-                })
-            );
-        }
-        this.itemOutputLayer = tf.layers.dense({
-            units: this.embDim,
-            activation: 'linear',
-            name: 'item_output'
-        });
-        
-        console.log("Model architecture built successfully");
-    }
+  // User forward pass: input tensor shape [batch, 3] with [ageScaled, genderIdx, occupationIdx]
+  userForward(userFeatureTensor) {
+    return tf.tidy(() => {
+      // ageScaled is float; genderIdx and occupationIdx are integers
+      const ageTensor = userFeatureTensor.slice([0, 0], [-1, 1]); // shape [batch,1]
+      const genderIdxTensor = userFeatureTensor.slice([0, 1], [-1, 1]).toInt();
+      const occIdxTensor = userFeatureTensor.slice([0, 2], [-1, 1]).toInt();
 
-    userTower(userIds, userFeaturesList, app) {
-        return tf.tidy(() => {
-            const batchSize = userIds.length;
-            
-            // User ID embeddings
-            const userIdTensor = tf.tensor1d(userIds, 'int32');
-            const userEmbs = this.userIdEmbedding.apply(userIdTensor);
-            
-            // Age normalization
-            const ages = userFeaturesList.map(f => f.age / 100.0);
-            const ageTensor = tf.tensor1d(ages, 'float32').expandDims(1);
-            const ageNorm = this.ageNormalization.apply(ageTensor);
-            
-            // Gender embeddings
-            const genderIndices = userFeaturesList.map(f => this.genderMap[f.gender] || 0);
-            const genderTensor = tf.tensor1d(genderIndices, 'int32');
-            const genderEmbs = this.genderEmbedding.apply(genderTensor);
-            
-            // Occupation embeddings
-            if (!this.occupationList) {
-                this.occupationList = [...new Set([...app.users.values()].map(u => u.occupation))];
-            }
-            const occupationIndices = userFeaturesList.map(f => {
-                const index = this.occupationList.indexOf(f.occupation);
-                return Math.max(0, index);
-            });
-            const occupationTensor = tf.tensor1d(occupationIndices, 'int32');
-            const occupationEmbs = this.occupationEmbedding.apply(occupationTensor);
-            
-            // Concatenate all features
-            let combined = tf.concat([
-                userEmbs,
-                ageNorm,
-                genderEmbs,
-                occupationEmbs
-            ], 1);
-            
-            // Apply MLP
-            for (const layer of this.userLayers) {
-                combined = layer.apply(combined);
-            }
-            
-            return this.userOutputLayer.apply(combined);
-        });
-    }
+      // Age embedding by dense
+      const ageEmb = ageTensor.matMul(this.ageDenseW).add(this.ageDenseB); // [batch, embDim]
 
-    itemTower(itemFeaturesBatch) {
-        return tf.tidy(() => {
-            let features = tf.tensor2d(itemFeaturesBatch);
-            features = this.itemProjection.apply(features);
-            
-            // Apply MLP
-            for (const layer of this.itemLayers) {
-                features = layer.apply(features);
-            }
-            
-            return this.itemOutputLayer.apply(features);
-        });
-    }
+      // Gender embedding lookup
+      const genderEmb = tf.gather(this.genderEmbedding, genderIdxTensor.reshape([-1])); // [batch, embDim]
 
-    async trainBatch(batchPairs, app) {
-        try {
-            // Extract batch data
-            const userIds = batchPairs.map(p => p.userIndex);
-            const itemIds = batchPairs.map(p => p.itemIndex);
-            const userFeatures = batchPairs.map(p => p.userFeatures);
-            
-            // Get item features
-            const itemFeatures = itemIds.map(itemId => {
-                const itemData = app.items.get(app.indexToItemId.get(itemId));
-                return itemData.genres;
-            });
+      // Occupation embedding lookup
+      const occEmb = tf.gather(this.occupationEmbedding, occIdxTensor.reshape([-1])); // [batch, embDim]
 
-            const loss = await this.trainStep(userIds, userFeatures, itemFeatures, app);
-            return loss;
-        } catch (error) {
-            console.error("Error in trainBatch:", error);
-            return 10.0; // Return high loss on error
-        }
-    }
+      // Concatenate embeddings [batch, embDim*3]
+      const concatEmb = tf.concat([ageEmb, genderEmb, occEmb], 1);
 
-    async trainStep(userIds, userFeatures, itemFeatures, app) {
-        return tf.tidy(() => {
-            // Forward pass - user tower (batch processing)
-            const userEmbeddings = this.userTower(userIds, userFeatures, app);
-            
-            // Forward pass - item tower (batch processing)
-            const itemEmbeddings = this.itemTower(itemFeatures);
-            
-            // Compute similarity matrix (batch_size x batch_size)
-            const scores = tf.matMul(userEmbeddings, itemEmbeddings, false, true);
-            
-            // In-batch negative sampling: diagonal are positives
-            const batchSize = userIds.length;
-            const labels = tf.oneHot(tf.range(0, batchSize, 1, 'int32'), batchSize);
-            
-            // Softmax cross entropy loss
-            const loss = tf.losses.softmaxCrossEntropy(labels, scores).mean();
-            
-            // Compute gradients and update
-            const variables = this.getTrainableVariables();
-            const gradFunc = tf.grad(l => l);
-            const gradients = gradFunc(loss, variables);
-            
-            this.optimizer.applyGradients(
-                variables.map((v, i) => ({ grad: gradients[i], var: v }))
-            );
-            
-            const lossValue = loss.dataSync()[0];
-            
-            // Cleanup
-            tf.dispose([userEmbeddings, itemEmbeddings, scores, labels, loss, ...variables, ...gradients]);
-            
-            return lossValue;
-        });
-    }
+      // User MLP hidden layer with ReLU
+      const h1 = concatEmb.matMul(this.userMLP_W1).add(this.userMLP_b1).relu();
+      // Output user embedding
+      const out = h1.matMul(this.userMLP_W2).add(this.userMLP_b2);
+      return out; // shape [batch, embDim]
+    });
+  }
 
-    getTrainableVariables() {
-        const layers = [
-            this.userIdEmbedding, this.ageNormalization, this.genderEmbedding,
-            this.occupationEmbedding, ...this.userLayers, this.userOutputLayer,
-            this.itemProjection, ...this.itemLayers, this.itemOutputLayer
-        ];
-        
-        return layers.flatMap(layer => layer.trainableWeights);
-    }
+  // Item forward pass: input genre tensor shape [batch, numGenres] of 0/1
+  itemForward(itemFeatureTensor) {
+    return tf.tidy(() => {
+      // Project genres via embedding matrix: [batch, numGenres] x [numGenres, embDim] => [batch, embDim]
+      const genreEmb = itemFeatureTensor.matMul(this.genreEmbeddingW);
 
-    async getUserEmbedding(userIndex, userFeatures, app) {
-        return tf.tidy(() => {
-            const userIds = [userIndex];
-            const userFeaturesList = [userFeatures];
-            const embedding = this.userTower(userIds, userFeaturesList, app);
-            const data = embedding.dataSync();
-            return Array.from(data);
-        });
-    }
+      // Item MLP hidden layer with ReLU
+      const h1 = genreEmb.matMul(this.itemMLP_W1).add(this.itemMLP_b1).relu();
+      // Output item embedding
+      const out = h1.matMul(this.itemMLP_W2).add(this.itemMLP_b2);
+      return out; // shape [batch, embDim]
+    });
+  }
 
-    async scoreUserItems(userEmb, itemIndices, app) {
-        return tf.tidy(() => {
-            const userTensor = tf.tensor2d([userEmb]);
-            const scores = [];
-            
-            // Process items one by one to avoid memory issues
-            for (let i = 0; i < itemIndices.length; i++) {
-                const itemId = app.indexToItemId.get(itemIndices[i]);
-                const itemFeatures = app.items.get(itemId).genres;
-                const itemTensor = this.itemTower([itemFeatures]);
-                
-                const score = tf.matMul(userTensor, itemTensor, false, true).dataSync()[0];
-                scores.push(score);
-                
-                itemTensor.dispose();
-            }
-            
-            userTensor.dispose();
-            return scores;
-        });
-    }
+  // Dot product scoring for pairs userEmb [batch, embDim], itemEmb [batch, embDim]
+  score(userEmb, itemEmb) {
+    return tf.tidy(() => {
+      return tf.sum(userEmb.mul(itemEmb), 1); // shape [batch]
+    });
+  }
 
-    async getItemEmbeddingsBatch(itemIndices, app) {
-        return tf.tidy(() => {
-            const itemFeaturesBatch = itemIndices.map(index => {
-                const itemId = app.indexToItemId.get(index);
-                return app.items.get(itemId).genres;
-            });
-            
-            const embeddingsTensor = this.itemTower(itemFeaturesBatch);
-            const embeddings = Array.from(embeddingsTensor.dataSync());
-            
-            // Convert flat array to 2D array
-            const result = [];
-            const embSize = this.embDim;
-            for (let i = 0; i < embeddings.length; i += embSize) {
-                result.push(embeddings.slice(i, i + embSize));
-            }
-            
-            return result;
-        });
-    }
+  // Training step with positive pairs (with in-batch negative sampling for softmax)
+  trainStep(userFeatureTensor, posItemFeatureTensor, optimizer) {
+    const lossType = this.lossType;
+
+    const userMLPVars = [
+      this.ageDenseW, this.ageDenseB,
+      this.genderEmbedding, this.occupationEmbedding,
+      this.userMLP_W1, this.userMLP_b1,
+      this.userMLP_W2, this.userMLP_b2,
+    ];
+    const itemMLPVars = [
+      this.genreEmbeddingW,
+      this.itemMLP_W1, this.itemMLP_b1,
+      this.itemMLP_W2, this.itemMLP_b2,
+    ];
+
+    const trainVars = userMLPVars.concat(itemMLPVars);
+
+    const batchSize = userFeatureTensor.shape[0];
+
+    const lossFn = () => {
+      const userEmb = this.userForward(userFeatureTensor); // [batch, embDim]
+      const posItemEmb = this.itemForward(posItemFeatureTensor); // [batch, embDim]
+
+      if(lossType === 'softmax') {
+        // Compute scores matrix logits: [batch, batch] = userEmb @ posItemEmb^T
+        const logits = tf.matMul(userEmb, posItemEmb, false, true);
+        // Labels are diagonal (positive pairs)
+        const labels = tf.oneHot(tf.range(0, batchSize, 1, 'int32'), batchSize);
+        // Softmax cross entropy loss
+        const loss = tf.losses.softmaxCrossEntropy(labels, logits, undefined, undefined);
+        return loss;
+      } else if(lossType === 'bpr') {
+        // BPR loss requires negatives - sample negatives in batch by shuffling posItemEmb
+        const negItemEmb = tf.concat([posItemEmb.slice([1,0],[batchSize-1, -1]), posItemEmb.slice([0,0],[1, -1])], 0);
+        const posScores = this.score(userEmb, posItemEmb);
+        const negScores = this.score(userEmb, negItemEmb);
+        const diff = posScores.sub(negScores);
+        const loss = tf.neg(tf.logSigmoid(diff)).mean();
+        return loss;
+      }
+      throw new Error(`Unknown loss type ${lossType}`);
+    };
+
+    const grads = tf.variableGrads(lossFn, trainVars);
+
+    optimizer.applyGradients(grads.grads);
+    grads.dispose();
+
+    // Return scalar loss value for UI
+    return lossFn();
+  }
+}
+
+if(typeof module !== 'undefined') {
+  module.exports = {TwoTowerModel};
 }
