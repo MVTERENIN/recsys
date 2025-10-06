@@ -1,27 +1,118 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>MovieLens Demo</title>
-    <style>
-        body { font-family: Arial; margin: 20px; }
-        button { padding: 10px; margin: 5px; }
-        .status { margin: 10px 0; padding: 10px; background: #f0f0f0; }
-        table { border-collapse: collapse; margin: 10px 0; }
-        th, td { border: 1px solid #ddd; padding: 8px; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Two-Tower MovieLens 100K Retrieval Demo</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 1em;
+      background: #f9f9f9;
+      color: #222;
+    }
+    h1 {
+      margin-bottom: 0.5em;
+    }
+    button {
+      margin-right: 1em;
+      padding: 0.5em 1em;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    #status {
+      margin-top: 1em;
+      font-size: 0.9rem;
+      min-height: 1.5em;
+      font-weight: bold;
+      color: #444;
+    }
+    #lossChart, #embeddingCanvas {
+      border: 1px solid #ccc;
+      margin-top: 1em;
+      background: white;
+    }
+    #lossChart {
+      width: 600px;
+      height: 200px;
+    }
+    #embeddingCanvas {
+      width: 600px;
+      height: 400px;
+    }
+    #resultsContainer {
+      margin-top: 2em;
+      overflow-x: auto;
+    }
+    table {
+      border-collapse: collapse;
+      margin-top: 1em;
+      width: 100%;
+    }
+    th, td {
+      border: 1px solid #aaa;
+      padding: 0.25em 0.5em;
+      font-size: 0.85rem;
+      text-align: left;
+      vertical-align: top;
+      max-width: 200px;
+    }
+    th {
+      background-color: #ddd;
+    }
+    #sideBySideTable {
+      width: 100%;
+      table-layout: fixed;
+    }
+    #sideBySideTable th, #sideBySideTable td {
+      width: 33.333%;
+    }
+    #tips {
+      margin-top: 2em;
+      font-size: 0.85rem;
+      color: #555;
+      max-width: 700px;
+      line-height: 1.4;
+    }
+    .tooltip {
+      position: absolute;
+      background: #222;
+      color: #eee;
+      padding: 4px 8px;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      pointer-events: none;
+      visibility: hidden;
+      z-index: 10;
+    }
+  </style>
 </head>
 <body>
-    <h1>MovieLens Simple Demo</h1>
-    
-    <button id="loadData">1. Load Data</button>
-    <button id="train">2. Train Model</button>
-    <button id="test">3. Test Recommendations</button>
-    
-    <div id="status">Ready</div>
-    
-    <div id="output"></div>
+  <h1>Two-Tower MovieLens 100K Retrieval Demo</h1>
+  <button id="loadDataBtn">Load Data</button>
+  <button id="trainBtn" disabled>Train</button>
+  <button id="testBtn" disabled>Test</button>
 
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-    <script src="app.js"></script>
+  <div id="status"></div>
+
+  <canvas id="lossChart" width="600" height="200"></canvas>
+  <canvas id="embeddingCanvas" width="600" height="400" style="position:relative;"></canvas>
+  <div class="tooltip" id="tooltip"></div>
+
+  <div id="resultsContainer"></div>
+
+  <div id="tips">
+    <strong>Usage Tips:</strong><br>
+    • Loading data fetches and parses MovieLens 100K files.<br>
+    • Training runs fully in browser; typical training may take a few minutes depending on settings.<br>
+    • After training, a 2D projection of item embeddings is shown.<br>
+    • Testing shows side-by-side top-10 rated movies, deep learning recommendations, and content-based recommendations.<br>
+    • To host on GitHub Pages, place <code>index.html</code>, <code>app.js</code>, <code>two-tower.js</code> in root and <code>data/</code> folder with the three dataset files.<br>
+    • No server needed; fully client-side TF.js demo.<br>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.6.0/dist/tf.min.js"></script>
+  <script src="./two-tower.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
