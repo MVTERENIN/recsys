@@ -11,88 +11,36 @@ class TwoTowerModel {
         this.initializeOptimizer();
     }
 
-    initializeModel() {
-        const { embeddingDim, hiddenUnits } = this.config;
-        
-        // User tower components
-        this.userEmbedding = tf.layers.embedding({
-            inputDim: this.numUsers,
-            outputDim: embeddingDim,
-            inputLength: 1,
-            name: 'user_embedding'
-        });
-        
-        this.ageNormalization = tf.layers.dense({
-            units: 1,
-            activation: 'linear',
-            useBias: true,
-            name: 'age_normalization'
-        });
-        
-        this.genderEmbedding = tf.layers.embedding({
-            inputDim: this.numGenders,
-            outputDim: Math.floor(embeddingDim / 4),
-            inputLength: 1,
-            name: 'gender_embedding'
-        });
-        
-        this.occupationEmbedding = tf.layers.embedding({
-            inputDim: this.numOccupations,
-            outputDim: Math.floor(embeddingDim / 2),
-            inputLength: 1,
-            name: 'occupation_embedding'
-        });
-        
-        // User MLP
-        this.userMLP = [];
-        hiddenUnits.forEach((units, i) => {
-            this.userMLP.push(tf.layers.dense({
-                units: units,
-                activation: 'relu',
-                name: `user_mlp_${i}`
-            }));
-        });
-        this.userMLP.push(tf.layers.dense({
-            units: embeddingDim,
-            activation: 'linear',
-            name: 'user_output'
-        }));
-        
-        // Item tower components
-        this.itemEmbedding = tf.layers.embedding({
-            inputDim: this.numItems,
-            outputDim: embeddingDim,
-            inputLength: 1,
-            name: 'item_embedding'
-        });
-        
-        this.genreProjection = tf.layers.dense({
-            units: embeddingDim,
-            activation: 'linear',
-            useBias: true,
-            name: 'genre_projection'
-        });
-        
-        // Item MLP
-        this.itemMLP = [];
-        hiddenUnits.forEach((units, i) => {
-            this.itemMLP.push(tf.layers.dense({
-                units: units,
-                activation: 'relu',
-                name: `item_mlp_${i}`
-            }));
-        });
-        this.itemMLP.push(tf.layers.dense({
-            units: embeddingDim,
-            activation: 'linear',
-            name: 'item_output'
-        }));
-        
-        // Create occupation and gender mappings
-        this.occupationMap = this.createOccupationMap();
-        this.genderMap = { 'M': 0, 'F': 1 };
-    }
-
+   initializeModel() {
+    const { embeddingDim, hiddenUnits } = this.config;
+    
+    // User tower - simplified
+    this.userEmbedding = tf.layers.embedding({
+        inputDim: this.numUsers,
+        outputDim: embeddingDim,
+        name: 'user_embedding'
+    });
+    
+    // Item tower - simplified  
+    this.itemEmbedding = tf.layers.embedding({
+        inputDim: this.numItems,
+        outputDim: embeddingDim,
+        name: 'item_embedding'
+    });
+    
+    // Single hidden layer instead of multiple
+    this.userMLP = tf.layers.dense({
+        units: embeddingDim,
+        activation: 'relu',
+        name: 'user_mlp'
+    });
+    
+    this.itemMLP = tf.layers.dense({
+        units: embeddingDim, 
+        activation: 'relu',
+        name: 'item_mlp'
+    });
+}
     createOccupationMap() {
         // This would normally come from the data, using placeholder
         const occupations = [
@@ -185,28 +133,33 @@ class TwoTowerModel {
     }
 
     async trainEpoch(interactions, userIdMap, itemIdMap, users, items) {
-        const { batchSize, maxInteractions } = this.config;
-        const numBatches = Math.ceil(Math.min(interactions.length, maxInteractions) / batchSize);
-        let totalLoss = 0;
+    const { batchSize, maxInteractions } = this.config;
+    
+    // Use much smaller sample for training
+    const trainingInteractions = interactions
+        .sort(() => Math.random() - 0.5)
+        .slice(0, maxInteractions);
+    
+    const numBatches = Math.ceil(trainingInteractions.length / batchSize);
+    let totalLoss = 0;
+    
+    for (let batch = 0; batch < numBatches; batch++) {
+        const start = batch * batchSize;
+        const end = Math.min(start + batchSize, trainingInteractions.length);
+        const batchInteractions = trainingInteractions.slice(start, end);
         
-        // Shuffle interactions
-        const shuffled = [...interactions].sort(() => Math.random() - 0.5);
-        const trainingInteractions = shuffled.slice(0, maxInteractions);
+        const loss = await this.trainBatch(batchInteractions, userIdMap, itemIdMap, users, items);
+        totalLoss += loss;
         
-        for (let batch = 0; batch < numBatches; batch++) {
-            const start = batch * batchSize;
-            const end = Math.min(start + batchSize, trainingInteractions.length);
-            const batchInteractions = trainingInteractions.slice(start, end);
-            
-            const loss = await this.trainBatch(batchInteractions, userIdMap, itemIdMap, users, items);
-            totalLoss += loss;
-            
-            // Clean up memory
-            tf.disposeVariables();
+        // Update UI more frequently to show progress
+        if (batch % 10 === 0) {
+            console.log(`Batch ${batch}/${numBatches}, Loss: ${loss.toFixed(4)}`);
         }
-        
-        return totalLoss / numBatches;
     }
+    
+    return totalLoss / numBatches;
+}
+
 
     async trainBatch(interactions, userIdMap, itemIdMap, users, items) {
         return tf.tidy(() => {
