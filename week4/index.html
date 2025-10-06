@@ -19,6 +19,8 @@
         th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
         th { background-color: #f2f2f2; }
         .user-info { background: #e8f4fd; padding: 10px; margin: 10px 0; }
+        .progress { width: 100%; background: #f0f0f0; border-radius: 5px; margin: 10px 0; }
+        .progress-bar { height: 20px; background: #4CAF50; border-radius: 5px; width: 0%; transition: width 0.3s; }
     </style>
 </head>
 <body>
@@ -27,11 +29,15 @@
         
         <div class="button-group">
             <button id="loadData">Load Data</button>
-            <button id="trainModel">Train Model</button>
-            <button id="testModel">Test Recommendations</button>
+            <button id="trainModel" disabled>Train Model</button>
+            <button id="testModel" disabled>Test Recommendations</button>
         </div>
 
         <div id="status" class="status">Ready to load data...</div>
+
+        <div class="progress" id="progressBar" style="display: none;">
+            <div class="progress-bar" id="progressBarFill"></div>
+        </div>
 
         <div class="user-info" id="userInfo" style="display: none;">
             <h3>Selected User Profile</h3>
@@ -54,21 +60,21 @@
                 <div class="table-column">
                     <h3>User's Top Rated Movies</h3>
                     <table id="historicalTable">
-                        <thead><tr><th>Movie</th><th>Rating</th></tr></thead>
+                        <thead><tr><th>#</th><th>Movie</th><th>Rating</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
                 <div class="table-column">
                     <h3>Deep Learning Recommendations</h3>
                     <table id="dlTable">
-                        <thead><tr><th>Movie</th><th>Score</th></tr></thead>
+                        <thead><tr><th>#</th><th>Movie</th><th>Score</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
                 <div class="table-column">
                     <h3>Content-Based Recommendations</h3>
                     <table id="cbTable">
-                        <thead><tr><th>Movie</th><th>Similarity</th></tr></thead>
+                        <thead><tr><th>#</th><th>Movie</th><th>Similarity</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
