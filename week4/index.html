@@ -1,43 +1,27 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>MovieLens Two-Tower Retrieval Demo</title>
+    <title>MovieLens Demo</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        button { padding: 8px 16px; margin: 5px; cursor: pointer; }
+        body { font-family: Arial; margin: 20px; }
+        button { padding: 10px; margin: 5px; }
         .status { margin: 10px 0; padding: 10px; background: #f0f0f0; }
-        canvas { border: 1px solid #ccc; margin: 10px 0; }
-        table { border-collapse: collapse; width: 100%; margin: 10px 0; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background-color: #f2f2f2; }
-        .container { display: flex; gap: 20px; flex-wrap: wrap; }
-        .col { flex: 1; min-width: 300px; }
-        .loading { color: blue; }
-        .error { color: red; }
-        .success { color: green; }
+        table { border-collapse: collapse; margin: 10px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
     </style>
 </head>
 <body>
-    <h1>MovieLens Two-Tower Retrieval Demo</h1>
-    <p>Training optimized for browser - 10 epochs, small model. Should complete in 1-2 minutes on modern browsers.</p>
+    <h1>MovieLens Simple Demo</h1>
     
-    <button id="loadData">Load Data</button>
-    <button id="train">Train</button>
-    <button id="test">Test</button>
+    <button id="loadData">1. Load Data</button>
+    <button id="train">2. Train Model</button>
+    <button id="test">3. Test Recommendations</button>
     
-    <div id="status" class="status">Ready to load data...</div>
+    <div id="status">Ready</div>
     
-    <h2>Training Loss</h2>
-    <canvas id="lossChart" width="600" height="200"></canvas>
-    
-    <h2>Item Embeddings (PCA)</h2>
-    <canvas id="embeddingChart" width="600" height="400"></canvas>
-    
-    <h2>Recommendations Comparison</h2>
-    <div id="recommendations"></div>
+    <div id="output"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-    <script src="two-tower.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
