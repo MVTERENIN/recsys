@@ -3,24 +3,23 @@ class MovieLensApp {
         this.interactions = [];
         this.items = new Map();
         this.users = new Map();
-        this.userRatings = new Map(); // userId -> [{itemId, rating, timestamp}]
         this.userIdToIndex = new Map();
         this.itemIdToIndex = new Map();
-        this.indexToUserId = [];
-        this.indexToItemId = [];
+        this.indexToUserId = new Map();
+        this.indexToItemId = new Map();
+        this.userRatedItems = new Map();
+        this.model = null;
+        this.isTraining = false;
         
         // Configuration
         this.config = {
-            maxInteractions: 50000,
-            embeddingDim: 32,
-            hiddenUnits: 64,
-            batchSize: 512,
+            maxInteractions: 20000,
+            epochs: 10,
+            batchSize: 64,
+            embeddingDim: 12,
             learningRate: 0.001,
-            epochs: 20
+            hiddenUnits: [32]
         };
-        
-        this.model = null;
-        this.lossHistory = [];
         
         this.setupEventListeners();
     }
@@ -35,21 +34,18 @@ class MovieLensApp {
         this.updateStatus('Loading data...');
         
         try {
-            // Load and parse all three files
+            // Load and parse all three files in parallel
             const [interactionsData, itemsData, usersData] = await Promise.all([
                 this.fetchFile('data/u.data'),
                 this.fetchFile('data/u.item'),
                 this.fetchFile('data/u.user')
             ]);
 
-            this.parseInteractions(interactionsData);
-            this.parseItems(itemsData);
-            this.parseUsers(usersData);
-            this.buildIndexMappings();
-            this.precomputeUserRatings();
+            this.parseItemsData(itemsData);
+            this.parseUsersData(usersData);
+            this.parseInteractionsData(interactionsData);
             
             this.updateStatus(`Data loaded: ${this.users.size} users, ${this.items.size} items, ${this.interactions.length} interactions`);
-            
         } catch (error) {
             this.updateStatus(`Error loading data: ${error.message}`);
         }
@@ -61,41 +57,20 @@ class MovieLensApp {
         return await response.text();
     }
 
-    parseInteractions(data) {
-        this.interactions = [];
-        const lines = data.trim().split('\n');
-        
-        for (const line of lines) {
-            const [userId, itemId, rating, timestamp] = line.split('\t').map(x => parseInt(x));
-            this.interactions.push({
-                userId: userId.toString(),
-                itemId: itemId.toString(),
-                rating,
-                timestamp
-            });
-        }
-        
-        // Limit interactions if configured
-        if (this.config.maxInteractions && this.interactions.length > this.config.maxInteractions) {
-            this.interactions = this.interactions.slice(0, this.config.maxInteractions);
-        }
-    }
-
-    parseItems(data) {
-        this.items.clear();
-        const lines = data.trim().split('\n');
+    parseItemsData(data) {
+        const lines = data.split('\n').filter(line => line.trim());
         
         for (const line of lines) {
             const parts = line.split('|');
             if (parts.length < 24) continue;
             
-            const itemId = parts[0];
+            const itemId = parseInt(parts[0]);
             const title = parts[1];
             const yearMatch = title.match(/\((\d{4})\)$/);
             const year = yearMatch ? parseInt(yearMatch[1]) : 0;
             
             // Parse genres (last 19 fields)
-            const genres = parts.slice(5, 24).map(x => parseInt(x));
+            const genres = parts.slice(5, 24).map(g => parseInt(g));
             
             this.items.set(itemId, {
                 title: title.replace(/\(\d{4}\)$/, '').trim(),
@@ -105,67 +80,82 @@ class MovieLensApp {
         }
     }
 
-    parseUsers(data) {
-        this.users.clear();
-        const lines = data.trim().split('\n');
+    parseUsersData(data) {
+        const lines = data.split('\n').filter(line => line.trim());
         
         for (const line of lines) {
             const parts = line.split('|');
             if (parts.length < 5) continue;
             
-            const userId = parts[0];
+            const userId = parseInt(parts[0]);
             const age = parseInt(parts[1]);
             const gender = parts[2];
             const occupation = parts[3];
             
-            this.users.set(userId, {
-                age,
-                gender,
-                occupation
-            });
+            this.users.set(userId, { age, gender, occupation });
         }
+    }
+
+    parseInteractionsData(data) {
+        const lines = data.split('\n').filter(line => line.trim());
+        const allInteractions = [];
+        
+        for (const line of lines) {
+            const parts = line.split('\t');
+            if (parts.length < 4) continue;
+            
+            const userId = parseInt(parts[0]);
+            const itemId = parseInt(parts[1]);
+            const rating = parseFloat(parts[2]);
+            const timestamp = parseInt(parts[3]);
+            
+            if (this.users.has(userId) && this.items.has(itemId)) {
+                allInteractions.push({ userId, itemId, rating, timestamp });
+            }
+        }
+        
+        // Limit interactions for performance
+        this.interactions = allInteractions
+            .sort(() => Math.random() - 0.5)
+            .slice(0, this.config.maxInteractions);
+        
+        this.buildIndexMappings();
+        this.buildUserRatedItems();
     }
 
     buildIndexMappings() {
         // Build user index mappings
-        this.userIdToIndex.clear();
-        this.indexToUserId = [];
-        let userIndex = 0;
-        
-        for (const userId of this.users.keys()) {
-            this.userIdToIndex.set(userId, userIndex);
-            this.indexToUserId.push(userId);
-            userIndex++;
-        }
+        const uniqueUserIds = [...new Set(this.interactions.map(i => i.userId))];
+        uniqueUserIds.forEach((userId, index) => {
+            this.userIdToIndex.set(userId, index);
+            this.indexToUserId.set(index, userId);
+        });
 
         // Build item index mappings
-        this.itemIdToIndex.clear();
-        this.indexToItemId = [];
-        let itemIndex = 0;
-        
-        for (const itemId of this.items.keys()) {
-            this.itemIdToIndex.set(itemId, itemIndex);
-            this.indexToItemId.push(itemId);
-            itemIndex++;
-        }
+        const uniqueItemIds = [...new Set(this.interactions.map(i => i.itemId))];
+        uniqueItemIds.forEach((itemId, index) => {
+            this.itemIdToIndex.set(itemId, index);
+            this.indexToItemId.set(index, itemId);
+        });
     }
 
-    precomputeUserRatings() {
-        this.userRatings.clear();
+    buildUserRatedItems() {
+        this.userRatedItems.clear();
         
         for (const interaction of this.interactions) {
-            if (!this.userRatings.has(interaction.userId)) {
-                this.userRatings.set(interaction.userId, []);
+            if (!this.userRatedItems.has(interaction.userId)) {
+                this.userRatedItems.set(interaction.userId, []);
             }
-            this.userRatings.get(interaction.userId).push({
+            
+            this.userRatedItems.get(interaction.userId).push({
                 itemId: interaction.itemId,
                 rating: interaction.rating,
                 timestamp: interaction.timestamp
             });
         }
         
-        // Sort each user's ratings by rating (desc) then timestamp (desc)
-        for (const ratings of this.userRatings.values()) {
+        // Sort each user's ratings by rating (desc) and timestamp (desc)
+        for (const [userId, ratings] of this.userRatedItems) {
             ratings.sort((a, b) => {
                 if (b.rating !== a.rating) return b.rating - a.rating;
                 return b.timestamp - a.timestamp;
@@ -173,24 +163,9 @@ class MovieLensApp {
         }
     }
 
-    getUserFeatures(userId) {
-        const user = this.users.get(userId);
-        if (!user) return null;
-        
-        return {
-            age: user.age,
-            gender: user.gender,
-            occupation: user.occupation
-        };
-    }
-
-    getItemFeatures(itemId) {
-        const item = this.items.get(itemId);
-        if (!item) return null;
-        
-        return {
-            genres: item.genres
-        };
+    updateStatus(message) {
+        document.getElementById('status').textContent = message;
+        console.log(message);
     }
 
     async train() {
@@ -199,15 +174,16 @@ class MovieLensApp {
             return;
         }
 
+        this.isTraining = true;
         this.updateStatus('Initializing model...');
         
-        // Get unique counts for embedding layers
-        const numUsers = this.indexToUserId.length;
-        const numItems = this.indexToItemId.length;
+        // Initialize model
+        const numUsers = this.userIdToIndex.size;
+        const numItems = this.itemIdToIndex.size;
         const numGenres = 19; // Fixed for MovieLens
-        const numGenders = 2; // M, F
-        const numOccupations = 20; // Common occupations in dataset
-
+        const numOccupations = [...new Set([...this.users.values()].map(u => u.occupation))].length;
+        const numGenders = 2; // M/F
+        
         this.model = new TwoTowerModel(
             numUsers,
             numItems,
@@ -218,323 +194,63 @@ class MovieLensApp {
             numGenders
         );
 
-        this.lossHistory = [];
-        this.updateStatus(`Training started... (${this.config.epochs} epochs)`);
-        
+        // Prepare training data
+        const trainingPairs = this.interactions.map(interaction => ({
+            userIndex: this.userIdToIndex.get(interaction.userId),
+            itemIndex: this.itemIdToIndex.get(interaction.itemId)
+        }));
+
         // Initialize loss chart
-        this.initLossChart();
+        const lossCtx = document.getElementById('lossChart').getContext('2d');
+        lossCtx.clearRect(0, 0, 600, 200);
+        lossCtx.strokeStyle = 'blue';
+        lossCtx.beginPath();
+        lossCtx.moveTo(0, 200);
 
-        // Training loop
+        // Training loop with yield to prevent blocking
+        this.updateStatus('Starting training...');
+        
         for (let epoch = 0; epoch < this.config.epochs; epoch++) {
-            const epochLoss = await this.trainEpoch(epoch);
-            this.lossHistory.push(epochLoss);
-            this.updateLossChart();
+            this.updateStatus(`Training epoch ${epoch + 1}/${this.config.epochs}`);
             
-            this.updateStatus(`Epoch ${epoch + 1}/${this.config.epochs} completed. Loss: ${epochLoss.toFixed(4)}`);
-            
-            // Yield to UI to prevent freezing
-            await new Promise(resolve => setTimeout(resolve, 10));
-        }
+            // Shuffle training pairs
+            const shuffled = [...trainingPairs].sort(() => Math.random() - 0.5);
+            let epochLoss = 0;
+            let batchCount = 0;
 
+            for (let i = 0; i < shuffled.length; i += this.config.batchSize) {
+                if (!this.isTraining) break;
+                
+                const batch = shuffled.slice(i, i + this.config.batchSize);
+                const loss = await this.model.trainBatch(batch, this);
+                
+                epochLoss += loss;
+                batchCount++;
+                
+                // Update loss chart
+                const x = (i / shuffled.length + epoch) * (600 / this.config.epochs);
+                const y = 200 - Math.min(loss * 10, 200);
+                
+                if (i === 0 && epoch === 0) {
+                    lossCtx.moveTo(x, y);
+                } else {
+                    lossCtx.lineTo(x, y);
+                }
+                lossCtx.stroke();
+                
+                // Yield to prevent blocking
+                if (i % (this.config.batchSize * 10) === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+            }
+            
+            const avgLoss = epochLoss / batchCount;
+            this.updateStatus(`Epoch ${epoch + 1} completed. Average loss: ${avgLoss.toFixed(4)}`);
+        }
+        
+        this.isTraining = false;
         this.updateStatus('Training completed!');
-        
-        // Generate embedding visualization
-        await this.visualizeEmbeddings();
-    }
-
-    async trainEpoch(epoch) {
-        let totalLoss = 0;
-        let batchCount = 0;
-        
-        // Shuffle interactions for this epoch
-        const shuffledInteractions = [...this.interactions];
-        this.shuffleArray(shuffledInteractions);
-        
-        // Process in batches
-        for (let i = 0; i < shuffledInteractions.length; i += this.config.batchSize) {
-            const batchInteractions = shuffledInteractions.slice(i, i + this.config.batchSize);
-            
-            // Prepare batch data
-            const userIndices = [];
-            const itemIndices = [];
-            const userFeatures = [];
-            const itemFeatures = [];
-            
-            for (const interaction of batchInteractions) {
-                const userIdx = this.userIdToIndex.get(interaction.userId);
-                const itemIdx = this.itemIdToIndex.get(interaction.itemId);
-                const userData = this.getUserFeatures(interaction.userId);
-                const itemData = this.getItemFeatures(interaction.itemId);
-                
-                if (userIdx !== undefined && itemIdx !== undefined && userData && itemData) {
-                    userIndices.push(userIdx);
-                    itemIndices.push(itemIdx);
-                    
-                    userFeatures.push({
-                        age: userData.age,
-                        gender: userData.gender,
-                        occupation: userData.occupation
-                    });
-                    
-                    itemFeatures.push({
-                        genres: itemData.genres
-                    });
-                }
-            }
-            
-            if (userIndices.length === 0) continue;
-            
-            const batchLoss = await this.model.trainStep(
-                userIndices,
-                itemIndices,
-                userFeatures,
-                itemFeatures
-            );
-            
-            totalLoss += batchLoss;
-            batchCount++;
-            
-            // Update status periodically
-            if (batchCount % 10 === 0) {
-                this.updateStatus(`Epoch ${epoch + 1}: Batch ${batchCount}, Loss: ${batchLoss.toFixed(4)}`);
-            }
-        }
-        
-        return totalLoss / batchCount;
-    }
-
-    shuffleArray(array) {
-        for (let i = array.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [array[i], array[j]] = [array[j], array[i]];
-        }
-    }
-
-    initLossChart() {
-        const canvas = document.getElementById('lossChart');
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // Draw initial axes
-        ctx.strokeStyle = '#000';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(50, 20);
-        ctx.lineTo(50, canvas.height - 30);
-        ctx.lineTo(canvas.width - 20, canvas.height - 30);
-        ctx.stroke();
-        
-        ctx.fillStyle = '#000';
-        ctx.fillText('Loss', 10, canvas.height / 2);
-        ctx.fillText('Epoch', canvas.width / 2, canvas.height - 10);
-    }
-
-    updateLossChart() {
-        const canvas = document.getElementById('lossChart');
-        const ctx = canvas.getContext('2d');
-        
-        // Clear chart area (preserve axes)
-        ctx.clearRect(51, 0, canvas.width - 71, canvas.height - 31);
-        
-        if (this.lossHistory.length === 0) return;
-        
-        const maxLoss = Math.max(...this.lossHistory);
-        const minLoss = Math.min(...this.lossHistory);
-        const range = maxLoss - minLoss || 1;
-        
-        const width = canvas.width - 70;
-        const height = canvas.height - 50;
-        
-        ctx.strokeStyle = '#ff4444';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        
-        for (let i = 0; i < this.lossHistory.length; i++) {
-            const x = 50 + (i / (this.lossHistory.length - 1)) * width;
-            const y = 20 + ((this.lossHistory[i] - minLoss) / range) * height;
-            
-            if (i === 0) {
-                ctx.moveTo(x, y);
-            } else {
-                ctx.lineTo(x, y);
-            }
-        }
-        
-        ctx.stroke();
-        
-        // Add data points
-        ctx.fillStyle = '#ff4444';
-        for (let i = 0; i < this.lossHistory.length; i++) {
-            const x = 50 + (i / (this.lossHistory.length - 1)) * width;
-            const y = 20 + ((this.lossHistory[i] - minLoss) / range) * height;
-            ctx.beginPath();
-            ctx.arc(x, y, 3, 0, 2 * Math.PI);
-            ctx.fill();
-        }
-    }
-
-    async visualizeEmbeddings() {
-        if (!this.model) return;
-        
-        this.updateStatus('Generating embedding visualization...');
-        
-        // Sample items for visualization (max 500 for performance)
-        const sampleSize = Math.min(500, this.indexToItemId.length);
-        const sampleIndices = [];
-        
-        for (let i = 0; i < sampleSize; i++) {
-            sampleIndices.push(Math.floor(Math.random() * this.indexToItemId.length));
-        }
-        
-        // Get item features for sampled items
-        const itemFeatures = [];
-        const itemTitles = [];
-        
-        for (const idx of sampleIndices) {
-            const itemId = this.indexToItemId[idx];
-            const item = this.items.get(itemId);
-            if (item) {
-                itemFeatures.push({ genres: item.genres });
-                itemTitles.push(item.title);
-            }
-        }
-        
-        // Get embeddings from item tower
-        const embeddings = await this.model.getItemEmbeddings(itemFeatures);
-        
-        // Apply PCA to reduce to 2D
-        const projected = this.pcaProjection(embeddings, 2);
-        
-        // Draw on canvas
-        this.drawEmbeddings(projected, itemTitles);
-        
-        this.updateStatus('Embedding visualization completed');
-    }
-
-    pcaProjection(embeddings, dimensions = 2) {
-        // Simple PCA using power iteration for top 2 components
-        const matrix = embeddings;
-        const n = matrix.length;
-        const d = matrix[0].length;
-        
-        // Center the data
-        const mean = new Array(d).fill(0);
-        for (let i = 0; i < n; i++) {
-            for (let j = 0; j < d; j++) {
-                mean[j] += matrix[i][j];
-            }
-        }
-        for (let j = 0; j < d; j++) {
-            mean[j] /= n;
-        }
-        
-        const centered = matrix.map(row => 
-            row.map((val, j) => val - mean[j])
-        );
-        
-        // Compute covariance matrix
-        const covariance = new Array(d).fill(0).map(() => new Array(d).fill(0));
-        for (let i = 0; i < n; i++) {
-            for (let j = 0; j < d; j++) {
-                for (let k = 0; k < d; k++) {
-                    covariance[j][k] += centered[i][j] * centered[i][k];
-                }
-            }
-        }
-        for (let j = 0; j < d; j++) {
-            for (let k = 0; k < d; k++) {
-                covariance[j][k] /= (n - 1);
-            }
-        }
-        
-        // Power iteration for top 2 eigenvectors
-        const eigenvectors = [];
-        for (let comp = 0; comp < dimensions; comp++) {
-            let vector = new Array(d).fill(0).map(() => Math.random());
-            this.normalize(vector);
-            
-            for (let iter = 0; iter < 50; iter++) {
-                const newVector = new Array(d).fill(0);
-                for (let i = 0; i < d; i++) {
-                    for (let j = 0; j < d; j++) {
-                        newVector[i] += covariance[i][j] * vector[j];
-                    }
-                }
-                vector = newVector;
-                
-                // Orthogonalize with previous components
-                for (const prevVec of eigenvectors) {
-                    const dot = vector.reduce((sum, val, i) => sum + val * prevVec[i], 0);
-                    for (let i = 0; i < d; i++) {
-                        vector[i] -= dot * prevVec[i];
-                    }
-                }
-                
-                this.normalize(vector);
-            }
-            eigenvectors.push(vector);
-        }
-        
-        // Project data
-        const projected = centered.map(point => {
-            const proj = new Array(dimensions).fill(0);
-            for (let comp = 0; comp < dimensions; comp++) {
-                for (let i = 0; i < d; i++) {
-                    proj[comp] += point[i] * eigenvectors[comp][i];
-                }
-            }
-            return proj;
-        });
-        
-        return projected;
-    }
-
-    normalize(vector) {
-        const norm = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0));
-        if (norm > 0) {
-            for (let i = 0; i < vector.length; i++) {
-                vector[i] /= norm;
-            }
-        }
-    }
-
-    drawEmbeddings(embeddings, titles) {
-        const canvas = document.getElementById('embeddingChart');
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // Find bounds
-        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-        for (const [x, y] of embeddings) {
-            minX = Math.min(minX, x);
-            maxX = Math.max(maxX, x);
-            minY = Math.min(minY, y);
-            maxY = Math.max(maxY, y);
-        }
-        
-        const scaleX = (canvas.width - 40) / (maxX - minX || 1);
-        const scaleY = (canvas.height - 40) / (maxY - minY || 1);
-        const scale = Math.min(scaleX, scaleY);
-        
-        const offsetX = (canvas.width - (maxX - minX) * scale) / 2;
-        const offsetY = (canvas.height - (maxY - minY) * scale) / 2;
-        
-        // Draw points
-        ctx.fillStyle = '#0066cc';
-        for (let i = 0; i < embeddings.length; i++) {
-            const [x, y] = embeddings[i];
-            const px = offsetX + (x - minX) * scale;
-            const py = offsetY + (y - minY) * scale;
-            
-            ctx.beginPath();
-            ctx.arc(px, py, 4, 0, 2 * Math.PI);
-            ctx.fill();
-            
-            // Store title for hover (simplified - no hover in this basic version)
-        }
-        
-        ctx.fillStyle = '#000';
-        ctx.fillText('PCA Projection of Item Embeddings', 10, 20);
+        this.visualizeEmbeddings();
     }
 
     async test() {
@@ -543,10 +259,8 @@ class MovieLensApp {
             return;
         }
 
-        this.updateStatus('Finding test user...');
-        
-        // Find users with at least 20 ratings
-        const qualifiedUsers = Array.from(this.userRatings.entries())
+        // Find a user with at least 20 ratings
+        const qualifiedUsers = [...this.userRatedItems.entries()]
             .filter(([_, ratings]) => ratings.length >= 20)
             .map(([userId]) => userId);
         
@@ -555,176 +269,324 @@ class MovieLensApp {
             return;
         }
         
-        // Pick random qualified user
-        const testUserId = qualifiedUsers[Math.floor(Math.random() * qualifiedUsers.length)];
-        const userRatings = this.userRatings.get(testUserId);
-        const userFeatures = this.getUserFeatures(testUserId);
+        const randomUserId = qualifiedUsers[Math.floor(Math.random() * qualifiedUsers.length)];
+        const user = this.users.get(randomUserId);
         
-        this.updateStatus(`Testing for user ${testUserId}...`);
+        this.updateStatus(`Testing for user ${randomUserId} (${user.gender}, ${user.age}, ${user.occupation})`);
         
         // Get historical top 10
-        const historicalTop10 = userRatings.slice(0, 10).map(rating => ({
-            title: this.items.get(rating.itemId)?.title || 'Unknown',
-            rating: rating.rating
-        }));
+        const historicalTop10 = this.userRatedItems.get(randomUserId)
+            .slice(0, 10)
+            .map(rating => this.items.get(rating.itemId));
         
         // Get deep learning recommendations
-        const dlRecommendations = await this.getDLRecommendations(testUserId, userFeatures);
+        const dlTop10 = await this.getDLRecommendations(randomUserId);
         
         // Get content-based recommendations
-        const cbRecommendations = this.getContentBasedRecommendations(testUserId);
+        const cbTop10 = this.getContentBasedRecommendations(randomUserId);
         
-        // Render results
-        this.renderRecommendationTables(historicalTop10, dlRecommendations, cbRecommendations);
-        
-        this.updateStatus(`Recommendations generated for user ${testUserId}`);
+        // Render comparison table
+        this.renderComparisonTable(historicalTop10, dlTop10, cbTop10);
     }
 
-    async getDLRecommendations(userId, userFeatures) {
-        if (!userFeatures) return [];
+    async getDLRecommendations(userId) {
+        const userIndex = this.userIdToIndex.get(userId);
+        const userData = this.users.get(userId);
         
         // Get user embedding
-        const userEmb = await this.model.getUserEmbedding([userFeatures]);
-        if (!userEmb || userEmb.length === 0) return [];
+        const userEmb = await this.model.getUserEmbedding(userIndex, userData, this);
         
-        // Get scores for all items
-        const allItemFeatures = [];
-        for (const itemId of this.indexToItemId) {
-            const item = this.items.get(itemId);
-            if (item) {
-                allItemFeatures.push({ genres: item.genres });
-            }
-        }
+        // Score all items
+        const allItemIndices = [...this.indexToItemId.keys()];
+        const scores = await this.model.scoreUserItems(userEmb, allItemIndices, this);
         
-        const scores = await this.model.getScoresForAllItems(userEmb[0], allItemFeatures);
+        // Get top 10, excluding already rated items
+        const ratedItemIds = new Set(this.userRatedItems.get(userId).map(r => r.itemId));
         
-        // Get user's rated items to exclude
-        const ratedItems = new Set(this.userRatings.get(userId).map(r => r.itemId));
-        
-        // Find top 10 unrated items
-        const scoredItems = scores.map((score, index) => ({
-            itemId: this.indexToItemId[index],
-            score,
-            title: this.items.get(this.indexToItemId[index])?.title || 'Unknown'
-        })).filter(item => !ratedItems.has(item.itemId))
+        const scoredItems = allItemIndices.map((itemIndex, i) => ({
+            itemId: this.indexToItemId.get(itemIndex),
+            score: scores[i]
+        })).filter(item => !ratedItemIds.has(item.itemId))
           .sort((a, b) => b.score - a.score)
-          .slice(0, 10);
+          .slice(0, 10)
+          .map(item => this.items.get(item.itemId));
         
         return scoredItems;
     }
 
     getContentBasedRecommendations(userId) {
-        const userRatings = this.userRatings.get(userId);
-        if (!userRatings) return [];
-        
-        // Build user genre profile from rated items
-        const userGenreProfile = new Array(19).fill(0);
-        let totalWeight = 0;
+        // Get user's genre preferences from rated items
+        const userRatings = this.userRatedItems.get(userId);
+        const userGenreVector = new Array(19).fill(0);
         
         for (const rating of userRatings) {
             const item = this.items.get(rating.itemId);
-            if (item) {
-                const weight = rating.rating; // Use rating as weight
-                for (let i = 0; i < 19; i++) {
-                    userGenreProfile[i] += item.genres[i] * weight;
-                }
-                totalWeight += weight;
-            }
-        }
-        
-        // Normalize
-        if (totalWeight > 0) {
             for (let i = 0; i < 19; i++) {
-                userGenreProfile[i] /= totalWeight;
+                userGenreVector[i] += item.genres[i] * rating.rating;
             }
         }
         
-        // Compute cosine similarity with all unrated items
-        const ratedItems = new Set(userRatings.map(r => r.itemId));
-        const similarities = [];
+        // Normalize genre vector
+        const magnitude = Math.sqrt(userGenreVector.reduce((sum, val) => sum + val * val, 0));
+        const normalizedUserVector = userGenreVector.map(val => val / magnitude);
         
-        for (const [itemId, item] of this.items.entries()) {
-            if (!ratedItems.has(itemId)) {
-                const similarity = this.cosineSimilarity(userGenreProfile, item.genres);
-                similarities.push({
-                    itemId,
-                    title: item.title,
-                    similarity
-                });
-            }
+        // Score all items by cosine similarity, excluding rated items
+        const ratedItemIds = new Set(userRatings.map(r => r.itemId));
+        const scoredItems = [];
+        
+        for (const [itemId, item] of this.items) {
+            if (ratedItemIds.has(itemId)) continue;
+            
+            const itemVector = item.genres;
+            const itemMagnitude = Math.sqrt(itemVector.reduce((sum, val) => sum + val * val, 0));
+            const normalizedItemVector = itemVector.map(val => val / itemMagnitude);
+            
+            // Cosine similarity
+            const similarity = normalizedUserVector.reduce((sum, userVal, i) => 
+                sum + userVal * normalizedItemVector[i], 0);
+            
+            scoredItems.push({ itemId, similarity, item });
         }
         
-        // Return top 10
-        return similarities.sort((a, b) => b.similarity - a.similarity).slice(0, 10);
+        return scoredItems
+            .sort((a, b) => b.similarity - a.similarity)
+            .slice(0, 10)
+            .map(item => item.item);
     }
 
-    cosineSimilarity(vecA, vecB) {
-        let dotProduct = 0;
-        let normA = 0;
-        let normB = 0;
-        
-        for (let i = 0; i < vecA.length; i++) {
-            dotProduct += vecA[i] * vecB[i];
-            normA += vecA[i] * vecA[i];
-            normB += vecB[i] * vecB[i];
-        }
-        
-        if (normA === 0 || normB === 0) return 0;
-        return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-    }
-
-    renderRecommendationTables(historical, dlRecs, cbRecs) {
-        const container = document.getElementById('recommendationTables');
-        
+    renderComparisonTable(historical, dlRecs, cbRecs) {
+        const maxLength = Math.max(historical.length, dlRecs.length, cbRecs.length);
         let html = `
-            <div>
-                <h4>Historical Top 10</h4>
-                <table>
-                    <thead><tr><th>Movie</th><th>Rating</th></tr></thead>
-                    <tbody>
+            <div class="container">
+                <div class="col">
+                    <h3>Historical Top 10</h3>
+                    <table>
+                        <tr><th>Movie Title</th><th>Year</th></tr>
         `;
         
-        for (const item of historical) {
-            html += `<tr><td>${item.title}</td><td>${'★'.repeat(item.rating)}</td></tr>`;
+        // Historical column
+        for (let i = 0; i < maxLength; i++) {
+            html += '<tr>';
+            if (i < historical.length) {
+                html += `<td>${historical[i].title}</td><td>${historical[i].year}</td>`;
+            } else {
+                html += '<td></td><td></td>';
+            }
+            html += '</tr>';
         }
-        html += `</tbody></table></div>`;
         
         html += `
-            <div>
-                <h4>Deep Learning Recommendations</h4>
-                <table>
-                    <thead><tr><th>Movie</th><th>Score</th></tr></thead>
-                    <tbody>
+                    </table>
+                </div>
+                <div class="col">
+                    <h3>Deep Learning Recommendations</h3>
+                    <table>
+                        <tr><th>Movie Title</th><th>Year</th></tr>
         `;
         
-        for (const item of dlRecs) {
-            html += `<tr><td>${item.title}</td><td>${item.score.toFixed(4)}</td></tr>`;
+        // DL recommendations column
+        for (let i = 0; i < maxLength; i++) {
+            html += '<tr>';
+            if (i < dlRecs.length) {
+                html += `<td>${dlRecs[i].title}</td><td>${dlRecs[i].year}</td>`;
+            } else {
+                html += '<td></td><td></td>';
+            }
+            html += '</tr>';
         }
-        html += `</tbody></table></div>`;
         
         html += `
-            <div>
-                <h4>Content-Based Recommendations</h4>
-                <table>
-                    <thead><tr><th>Movie</th><th>Similarity</th></tr></thead>
-                    <tbody>
+                    </table>
+                </div>
+                <div class="col">
+                    <h3>Content-Based Recommendations</h3>
+                    <table>
+                        <tr><th>Movie Title</th><th>Year</th></tr>
         `;
         
-        for (const item of cbRecs) {
-            html += `<tr><td>${item.title}</td><td>${item.similarity.toFixed(4)}</td></tr>`;
+        // Content-based recommendations column
+        for (let i = 0; i < maxLength; i++) {
+            html += '<tr>';
+            if (i < cbRecs.length) {
+                html += `<td>${cbRecs[i].title}</td><td>${cbRecs[i].year}</td>`;
+            } else {
+                html += '<td></td><td></td>';
+            }
+            html += '</tr>';
         }
-        html += `</tbody></table></div>`;
         
-        container.innerHTML = html;
+        html += `
+                    </table>
+                </div>
+            </div>
+        `;
+        
+        document.getElementById('recommendations').innerHTML = html;
     }
 
-    updateStatus(message) {
-        document.getElementById('status').textContent = message;
-        console.log(message);
+    visualizeEmbeddings() {
+        this.updateStatus('Computing PCA visualization...');
+        
+        // Sample items for visualization (for performance)
+        const sampleItems = [...this.items.entries()]
+            .sort(() => Math.random() - 0.5)
+            .slice(0, 200);
+        
+        // Get item embeddings
+        const itemIndices = sampleItems.map(([itemId]) => this.itemIdToIndex.get(itemId));
+        const itemTensors = itemIndices.map(index => 
+            tf.tensor1d(this.items.get(this.indexToItemId.get(index)).genres, 'float32')
+        );
+        
+        // Get embeddings through item tower
+        const embeddings = itemIndices.map((index, i) => {
+            const emb = this.model.itemTower(itemTensors[i]).dataSync();
+            itemTensors[i].dispose();
+            return Array.from(emb);
+        });
+        
+        // Simple PCA implementation
+        const pcaResult = this.simplePCA(embeddings, 2);
+        
+        // Draw on canvas
+        this.drawEmbeddings(pcaResult, sampleItems.map(([_, item]) => item));
+        
+        this.updateStatus('PCA visualization completed');
+    }
+
+    simplePCA(embeddings, targetDim) {
+        // Center the data
+        const mean = embeddings[0].map((_, i) => 
+            embeddings.reduce((sum, emb) => sum + emb[i], 0) / embeddings.length
+        );
+        
+        const centered = embeddings.map(emb => 
+            emb.map((val, i) => val - mean[i])
+        );
+        
+        // Compute covariance matrix (simplified)
+        const cov = [];
+        for (let i = 0; i < embeddings[0].length; i++) {
+            cov[i] = [];
+            for (let j = 0; j < embeddings[0].length; j++) {
+                cov[i][j] = centered.reduce((sum, emb) => sum + emb[i] * emb[j], 0) / (embeddings.length - 1);
+            }
+        }
+        
+        // Simple power iteration for top 2 eigenvectors (approximation)
+        let v1 = Array(embeddings[0].length).fill(1);
+        let v2 = Array(embeddings[0].length).fill(1);
+        
+        // First component
+        for (let iter = 0; iter < 10; iter++) {
+            const newV1 = cov.map(row => 
+                row.reduce((sum, val, j) => sum + val * v1[j], 0)
+            );
+            const norm = Math.sqrt(newV1.reduce((sum, val) => sum + val * val, 0));
+            v1 = newV1.map(val => val / norm);
+        }
+        
+        // Second component (orthogonal to first)
+        for (let iter = 0; iter < 10; iter++) {
+            const newV2 = cov.map(row => 
+                row.reduce((sum, val, j) => sum + val * v2[j], 0)
+            );
+            // Make orthogonal to v1
+            const dot = newV2.reduce((sum, val, i) => sum + val * v1[i], 0);
+            const orthogonal = newV2.map((val, i) => val - dot * v1[i]);
+            const norm = Math.sqrt(orthogonal.reduce((sum, val) => sum + val * val, 0));
+            v2 = orthogonal.map(val => val / norm);
+        }
+        
+        // Project data
+        return embeddings.map(emb => ({
+            x: emb.reduce((sum, val, i) => sum + val * v1[i], 0),
+            y: emb.reduce((sum, val, i) => sum + val * v2[i], 0)
+        }));
+    }
+
+    drawEmbeddings(points, items) {
+        const canvas = document.getElementById('embeddingChart');
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Find bounds
+        const xs = points.map(p => p.x);
+        const ys = points.map(p => p.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        
+        // Scale points to canvas
+        const scaleX = (canvas.width - 40) / (maxX - minX);
+        const scaleY = (canvas.height - 40) / (maxY - minY);
+        const scale = Math.min(scaleX, scaleY);
+        
+        const scaledPoints = points.map(p => ({
+            x: 20 + (p.x - minX) * scale,
+            y: canvas.height - 20 - (p.y - minY) * scale
+        }));
+        
+        // Draw points
+        ctx.fillStyle = 'rgba(0, 100, 255, 0.6)';
+        for (let i = 0; i < scaledPoints.length; i++) {
+            ctx.beginPath();
+            ctx.arc(scaledPoints[i].x, scaledPoints[i].y, 3, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+        
+        // Add hover functionality
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Find closest point
+            let closestIndex = -1;
+            let minDist = 10; // Only show tooltip if close enough
+            
+            for (let i = 0; i < scaledPoints.length; i++) {
+                const dist = Math.sqrt(
+                    Math.pow(x - scaledPoints[i].x, 2) + 
+                    Math.pow(y - scaledPoints[i].y, 2)
+                );
+                if (dist < minDist) {
+                    minDist = dist;
+                    closestIndex = i;
+                }
+            }
+            
+            // Draw tooltip
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Redraw points
+            for (let i = 0; i < scaledPoints.length; i++) {
+                ctx.beginPath();
+                ctx.arc(scaledPoints[i].x, scaledPoints[i].y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+            
+            // Highlight closest point and show title
+            if (closestIndex !== -1) {
+                ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
+                ctx.beginPath();
+                ctx.arc(scaledPoints[closestIndex].x, scaledPoints[closestIndex].y, 5, 0, 2 * Math.PI);
+                ctx.fill();
+                
+                ctx.fillStyle = 'black';
+                ctx.font = '12px Arial';
+                ctx.fillText(
+                    items[closestIndex].title, 
+                    scaledPoints[closestIndex].x + 8, 
+                    scaledPoints[closestIndex].y - 8
+                );
+            }
+        });
     }
 }
 
-// Initialize application when page loads
+// Initialize app when loaded
 let app;
 document.addEventListener('DOMContentLoaded', () => {
     app = new MovieLensApp();
