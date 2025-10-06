@@ -9,6 +9,7 @@ class MovieLensApp {
         this.reverseItemIdMap = new Map();
         this.userRatedItems = new Map();
         this.model = null;
+        this.isTraining = false;
         
         this.initializeEventListeners();
         this.setupLossChart();
@@ -25,18 +26,23 @@ class MovieLensApp {
         this.updateStatus('Loading MovieLens 100K data...');
         
         try {
-            await this.loadUsers();
-            await this.loadItems();
-            await this.loadInteractions();
+            await Promise.all([
+                this.loadUsers(),
+                this.loadItems(), 
+                this.loadInteractions()
+            ]);
             this.preprocessData();
+            document.getElementById('trainModel').disabled = false;
             this.updateStatus(`Data loaded successfully: ${this.users.size} users, ${this.items.size} movies, ${this.interactions.length} ratings`);
         } catch (error) {
             this.updateStatus(`Error loading data: ${error.message}`);
+            console.error('Load error:', error);
         }
     }
 
     async loadUsers() {
         const response = await fetch('data/u.user');
+        if (!response.ok) throw new Error(`Failed to load users: ${response.status}`);
         const text = await response.text();
         const lines = text.trim().split('\n');
         
@@ -53,6 +59,7 @@ class MovieLensApp {
 
     async loadItems() {
         const response = await fetch('data/u.item');
+        if (!response.ok) throw new Error(`Failed to load items: ${response.status}`);
         const text = await response.text();
         const lines = text.trim().split('\n');
         
@@ -60,24 +67,18 @@ class MovieLensApp {
             const parts = line.split('|');
             const itemId = parseInt(parts[0]);
             const title = parts[1];
-            const releaseDate = parts[2];
             const genres = parts.slice(5, 24).map(g => parseInt(g));
-            
-            // Extract year from title (format: "Movie Name (YYYY)")
-            const yearMatch = title.match(/\((\d{4})\)$/);
-            const year = yearMatch ? parseInt(yearMatch[1]) : null;
             
             this.items.set(itemId, {
                 title,
-                year,
-                genres,
-                releaseDate
+                genres
             });
         });
     }
 
     async loadInteractions() {
         const response = await fetch('data/u.data');
+        if (!response.ok) throw new Error(`Failed to load interactions: ${response.status}`);
         const text = await response.text();
         const lines = text.trim().split('\n');
         
@@ -137,6 +138,18 @@ class MovieLensApp {
         console.log(message);
     }
 
+    updateProgress(percent) {
+        const progressBar = document.getElementById('progressBar');
+        const progressFill = document.getElementById('progressBarFill');
+        
+        if (percent > 0) {
+            progressBar.style.display = 'block';
+            progressFill.style.width = `${percent}%`;
+        } else {
+            progressBar.style.display = 'none';
+        }
+    }
+
     setupLossChart() {
         const canvas = document.getElementById('lossChart');
         this.lossCtx = canvas.getContext('2d');
@@ -144,8 +157,6 @@ class MovieLensApp {
         this.lossCtx.fillRect(0, 0, canvas.width, canvas.height);
         
         this.lossData = [];
-        this.lossCtx.strokeStyle = 'blue';
-        this.lossCtx.lineWidth = 2;
     }
 
     setupEmbeddingChart() {
@@ -155,7 +166,7 @@ class MovieLensApp {
         this.embeddingCtx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
-    updateLossChart(loss) {
+    updateLossChart(loss, epoch, totalEpochs) {
         this.lossData.push(loss);
         
         const canvas = document.getElementById('lossChart');
@@ -177,9 +188,9 @@ class MovieLensApp {
         ctx.strokeStyle = 'blue';
         ctx.lineWidth = 2;
         
-        this.lossData.forEach((loss, index) => {
+        this.lossData.forEach((lossVal, index) => {
             const x = (index / (this.lossData.length - 1)) * width;
-            const y = height - ((loss - minLoss) / range) * height * 0.9 - 20;
+            const y = height - ((lossVal - minLoss) / range) * height * 0.9 - 20;
             
             if (index === 0) {
                 ctx.moveTo(x, y);
@@ -193,67 +204,79 @@ class MovieLensApp {
         // Add labels
         ctx.fillStyle = 'black';
         ctx.font = '12px Arial';
-        ctx.fillText(`Latest Loss: ${loss.toFixed(4)}`, 10, 20);
-        ctx.fillText(`Max: ${maxLoss.toFixed(4)}`, 10, 40);
+        ctx.fillText(`Epoch: ${epoch}/${totalEpochs}`, 10, 20);
+        ctx.fillText(`Latest Loss: ${loss.toFixed(4)}`, 10, 40);
         ctx.fillText(`Min: ${minLoss.toFixed(4)}`, 10, 60);
     }
 
     async trainModel() {
-    if (this.interactions.length === 0) {
-        this.updateStatus('Please load data first');
-        return;
-    }
-
-    this.updateStatus('Initializing Two-Tower Model (optimized for speed)...');
-    
-    const numUsers = this.users.size;
-    const numItems = this.items.size;
-    const numGenres = 19;
-    const numOccupations = new Set(Array.from(this.users.values()).map(u => u.occupation)).size;
-    const numGenders = 2;
-
-    this.model = new TwoTowerModel(
-        numUsers,
-        numItems,
-        numGenres,
-        numOccupations,
-        numGenders,
-        {
-            embeddingDim: 16,  // Reduced from 32
-            hiddenUnits: [32, 16],  // Reduced from [64, 32]
-            learningRate: 0.01,  // Increased for faster convergence
-            batchSize: 512,  // Increased for efficiency
-            maxInteractions: 20000  // Use only 20K interactions instead of 80K
+        if (this.interactions.length === 0) {
+            this.updateStatus('Please load data first');
+            return;
         }
-    );
 
-    this.updateStatus('Starting training (optimized for speed)...');
-    this.lossData = [];
-    
-    // Reduced epochs from 20 to 8
-    const epochs = 8;
-    for (let epoch = 0; epoch < epochs; epoch++) {
-        this.updateStatus(`Training epoch ${epoch + 1}/${epochs}...`);
-        const loss = await this.model.trainEpoch(this.interactions, this.userIdMap, this.itemIdMap, this.users, this.items);
-        this.updateLossChart(loss);
+        if (this.isTraining) {
+            this.updateStatus('Training already in progress...');
+            return;
+        }
+
+        this.isTraining = true;
+        document.getElementById('trainModel').disabled = true;
         
-        this.updateStatus(`Epoch ${epoch + 1} completed. Loss: ${loss.toFixed(4)}`);
-        
-        // Early stopping if loss is already low
-        if (loss < 0.1) {
-            this.updateStatus(`Early stopping at epoch ${epoch + 1} - loss is sufficiently low`);
-            break;
+        try {
+            this.updateStatus('Initializing Two-Tower Model...');
+            
+            const config = {
+                embeddingDim: 16,
+                learningRate: 0.001,
+                batchSize: 128,
+                maxInteractions: 5000
+            };
+
+            this.model = new TwoTowerModel(
+                this.users.size,
+                this.items.size,
+                19, // numGenres
+                config
+            );
+
+            this.updateStatus('Starting training...');
+            this.lossData = [];
+            
+            const epochs = 5;
+            let currentEpoch = 0;
+            
+            for (let epoch = 0; epoch < epochs; epoch++) {
+                currentEpoch = epoch + 1;
+                this.updateStatus(`Training epoch ${currentEpoch}/${epochs}...`);
+                this.updateProgress((currentEpoch / epochs) * 100);
+                
+                const loss = await this.model.trainEpoch(this.interactions, this.userIdMap, this.itemIdMap);
+                this.updateLossChart(loss, currentEpoch, epochs);
+                this.updateStatus(`Epoch ${currentEpoch} completed. Loss: ${loss.toFixed(4)}`);
+                
+                // Allow UI to update
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            
+            this.updateStatus('Training completed! Generating embedding visualization...');
+            await this.visualizeEmbeddings();
+            document.getElementById('testModel').disabled = false;
+            this.updateStatus('Ready for testing! Click "Test Recommendations" to see results.');
+            
+        } catch (error) {
+            this.updateStatus(`Training error: ${error.message}`);
+            console.error('Training error:', error);
+        } finally {
+            this.isTraining = false;
+            this.updateProgress(0);
+            document.getElementById('trainModel').disabled = false;
         }
     }
-    
-    this.updateStatus('Training completed! Generating embedding visualization...');
-    await this.visualizeEmbeddings();
-    this.updateStatus('Ready for testing! Click "Test Recommendations" to see results.');
-}
 
     async visualizeEmbeddings() {
-        // Sample 200 items for visualization
-        const sampleSize = Math.min(200, this.items.size);
+        // Sample 100 items for visualization
+        const sampleSize = Math.min(100, this.items.size);
         const sampledItemIndices = Array.from({length: sampleSize}, (_, i) => 
             Math.floor(i * (this.items.size / sampleSize))
         );
@@ -263,10 +286,10 @@ class MovieLensApp {
         
         for (const itemIdx of sampledItemIndices) {
             const itemId = this.reverseItemIdMap.get(itemIdx);
-            const item = this.items.get(itemId);
-            const embedding = await this.model.getItemEmbedding(itemIdx, item.genres);
-            itemEmbeddings.push(embedding.arraySync());
-            itemTitles.push(item.title);
+            const embedding = await this.model.getItemEmbedding(itemIdx);
+            itemEmbeddings.push(Array.from(embedding.dataSync()));
+            embedding.dispose();
+            itemTitles.push(this.items.get(itemId).title);
         }
         
         // Simple PCA implementation for 2D projection
@@ -275,35 +298,34 @@ class MovieLensApp {
     }
 
     simplePCA(embeddings, components = 2) {
+        if (embeddings.length === 0) return [];
+        
         // Center the data
-        const mean = embeddings[0].map((_, i) => 
-            embeddings.reduce((sum, e) => sum + e[i], 0) / embeddings.length
-        );
+        const n = embeddings[0].length;
+        const mean = Array(n).fill(0);
+        
+        embeddings.forEach(e => {
+            e.forEach((val, i) => mean[i] += val);
+        });
+        mean.forEach((val, i) => mean[i] = val / embeddings.length);
         
         const centered = embeddings.map(e => e.map((val, i) => val - mean[i]));
         
         // Compute covariance matrix
-        const cov = [];
-        const n = embeddings[0].length;
+        const cov = Array(n).fill(0).map(() => Array(n).fill(0));
         for (let i = 0; i < n; i++) {
-            cov[i] = [];
             for (let j = 0; j < n; j++) {
-                cov[i][j] = centered.reduce((sum, e) => sum + e[i] * e[j], 0) / (embeddings.length - 1);
+                let sum = 0;
+                for (let k = 0; k < centered.length; k++) {
+                    sum += centered[k][i] * centered[k][j];
+                }
+                cov[i][j] = sum / (centered.length - 1);
             }
         }
         
-        // Simple power iteration for first two components
-        const project = (vec) => {
-            const result = [];
-            for (let i = 0; i < centered.length; i++) {
-                result[i] = centered[i].reduce((sum, val, j) => sum + val * vec[j], 0);
-            }
-            return result;
-        };
-        
-        // First component (crude approximation)
-        let comp1 = Array(n).fill(1/Math.sqrt(n));
-        for (let iter = 0; iter < 10; iter++) {
+        // Simple power iteration for first component
+        let comp1 = Array(n).fill(1 / Math.sqrt(n));
+        for (let iter = 0; iter < 5; iter++) {
             let newComp = Array(n).fill(0);
             for (let i = 0; i < n; i++) {
                 for (let j = 0; j < n; j++) {
@@ -314,11 +336,14 @@ class MovieLensApp {
             comp1 = newComp.map(val => val / norm);
         }
         
-        const proj1 = project(comp1);
+        // Project data
+        const proj1 = centered.map(e => 
+            e.reduce((sum, val, i) => sum + val * comp1[i], 0)
+        );
         
-        // Second component (orthogonal to first)
-        let comp2 = Array(n).fill(1/Math.sqrt(n));
-        for (let iter = 0; iter < 10; iter++) {
+        // Simple second component (orthogonal to first)
+        let comp2 = Array(n).fill(1 / Math.sqrt(n));
+        for (let iter = 0; iter < 5; iter++) {
             let newComp = Array(n).fill(0);
             for (let i = 0; i < n; i++) {
                 for (let j = 0; j < n; j++) {
@@ -332,7 +357,9 @@ class MovieLensApp {
             comp2 = newComp.map(val => val / norm);
         }
         
-        const proj2 = project(comp2);
+        const proj2 = centered.map(e => 
+            e.reduce((sum, val, i) => sum + val * comp2[i], 0)
+        );
         
         return proj1.map((x, i) => [x, proj2[i]]);
     }
@@ -345,6 +372,8 @@ class MovieLensApp {
         
         ctx.fillStyle = 'white';
         ctx.fillRect(0, 0, width, height);
+        
+        if (projected.length === 0) return;
         
         // Find bounds
         const xValues = projected.map(p => p[0]);
@@ -371,7 +400,7 @@ class MovieLensApp {
         });
         
         ctx.fillStyle = 'black';
-        ctx.font = '10px Arial';
+        ctx.font = '12px Arial';
         ctx.fillText('Item Embeddings Projection (PCA)', 10, 20);
         ctx.fillText(`Showing ${projected.length} movies`, 10, 35);
     }
@@ -382,9 +411,9 @@ class MovieLensApp {
             return;
         }
 
-        // Find users with at least 20 ratings
+        // Find users with at least 10 ratings
         const qualifiedUsers = Array.from(this.userRatedItems.entries())
-            .filter(([userId, ratings]) => ratings.length >= 20)
+            .filter(([userId, ratings]) => ratings.length >= 10)
             .map(([userId]) => userId);
         
         if (qualifiedUsers.length === 0) {
@@ -419,29 +448,39 @@ class MovieLensApp {
         
         // Display results
         this.displayRecommendations(historicalTop10, dlRecommendations, cbRecommendations);
+        document.getElementById('recommendations').style.display = 'block';
         this.updateStatus('Recommendations generated successfully!');
     }
 
     async getDLRecommendations(userId, topK = 10) {
         const userIdx = this.userIdMap.get(userId);
-        const userData = this.users.get(userId);
-        
-        // Get user embedding
-        const userEmbedding = await this.model.getUserEmbedding(userIdx, userData);
-        
-        // Score all items
-        const scores = [];
         const ratedItemIds = new Set(this.userRatedItems.get(userId).map(r => r.itemId));
         
-        for (const [itemId, itemData] of this.items) {
-            if (!ratedItemIds.has(itemId)) { // Exclude already rated items
-                const itemIdx = this.itemIdMap.get(itemId);
-                const score = await this.model.scoreUserItem(userEmbedding, itemIdx, itemData.genres);
-                scores.push({ itemId, score, title: itemData.title });
-            }
+        // Get user embedding
+        const userEmbedding = await this.model.getUserEmbedding(userIdx);
+        
+        // Evaluate only 200 random items for speed
+        const allItemIds = Array.from(this.items.keys());
+        const candidateItemIds = allItemIds
+            .filter(itemId => !ratedItemIds.has(itemId))
+            .sort(() => Math.random() - 0.5)
+            .slice(0, 200);
+        
+        const scores = [];
+        
+        for (const itemId of candidateItemIds) {
+            const itemIdx = this.itemIdMap.get(itemId);
+            const score = await this.model.scoreUserItem(userEmbedding, itemIdx);
+            scores.push({ 
+                itemId, 
+                score, 
+                title: this.items.get(itemId).title 
+            });
         }
         
-        // Return top K
+        // Cleanup
+        userEmbedding.dispose();
+        
         return scores.sort((a, b) => b.score - a.score).slice(0, topK);
     }
 
@@ -451,21 +490,20 @@ class MovieLensApp {
         
         // Build user genre profile from rated movies
         const userGenreProfile = Array(19).fill(0);
-        let totalWeight = 0;
         
         userRatings.forEach(rating => {
             const item = this.items.get(rating.itemId);
             item.genres.forEach((genre, idx) => {
                 if (genre) {
-                    userGenreProfile[idx] += rating.rating; // Weight by rating
-                    totalWeight += rating.rating;
+                    userGenreProfile[idx] += 1;
                 }
             });
         });
         
         // Normalize
-        if (totalWeight > 0) {
-            userGenreProfile.forEach((val, idx) => userGenreProfile[idx] = val / totalWeight);
+        const total = userGenreProfile.reduce((sum, val) => sum + val, 0);
+        if (total > 0) {
+            userGenreProfile.forEach((val, idx) => userGenreProfile[idx] = val / total);
         }
         
         // Compute cosine similarity with all unrated items
@@ -473,11 +511,13 @@ class MovieLensApp {
         for (const [itemId, itemData] of this.items) {
             if (!ratedItemIds.has(itemId)) {
                 const similarity = this.cosineSimilarity(userGenreProfile, itemData.genres);
-                similarities.push({ 
-                    itemId, 
-                    similarity, 
-                    title: itemData.title 
-                });
+                if (similarity > 0) {
+                    similarities.push({ 
+                        itemId, 
+                        similarity, 
+                        title: itemData.title 
+                    });
+                }
             }
         }
         
@@ -500,34 +540,35 @@ class MovieLensApp {
     }
 
     displayRecommendations(historical, dlRecs, cbRecs) {
-        document.getElementById('recommendations').style.display = 'block';
-        
         // Historical ratings
         const historicalTbody = document.getElementById('historicalTable').querySelector('tbody');
         historicalTbody.innerHTML = '';
-        historical.forEach(rating => {
+        historical.forEach((rating, index) => {
             const item = this.items.get(rating.itemId);
             const row = historicalTbody.insertRow();
-            row.insertCell(0).textContent = item.title;
-            row.insertCell(1).textContent = rating.rating.toFixed(1);
+            row.insertCell(0).textContent = index + 1;
+            row.insertCell(1).textContent = item.title;
+            row.insertCell(2).textContent = rating.rating.toFixed(1);
         });
         
         // DL recommendations
         const dlTbody = document.getElementById('dlTable').querySelector('tbody');
         dlTbody.innerHTML = '';
-        dlRecs.forEach(rec => {
+        dlRecs.forEach((rec, index) => {
             const row = dlTbody.insertRow();
-            row.insertCell(0).textContent = rec.title;
-            row.insertCell(1).textContent = rec.score.toFixed(4);
+            row.insertCell(0).textContent = index + 1;
+            row.insertCell(1).textContent = rec.title;
+            row.insertCell(2).textContent = rec.score.toFixed(4);
         });
         
         // Content-based recommendations
         const cbTbody = document.getElementById('cbTable').querySelector('tbody');
         cbTbody.innerHTML = '';
-        cbRecs.forEach(rec => {
+        cbRecs.forEach((rec, index) => {
             const row = cbTbody.insertRow();
-            row.insertCell(0).textContent = rec.title;
-            row.insertCell(1).textContent = rec.similarity.toFixed(4);
+            row.insertCell(0).textContent = index + 1;
+            row.insertCell(1).textContent = rec.title;
+            row.insertCell(2).textContent = rec.similarity.toFixed(4);
         });
     }
 }
