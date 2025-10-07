@@ -341,12 +341,21 @@ async function trainModel() {
         const negItemFeaturesTensor = posItemFeaturesTensor;
 
         // Compute loss and gradients via gradient tape
-        const loss = optimizer.minimize(() => {
-          const lossVal = model.trainStep(userFeatureTensor, posItemFeaturesTensor, optimizer);
-          return lossVal;
-        }, true);
+        // --- FIX: Proper disposal of gradients ---
+        const grads = tf.variableGrads(() => model.trainStep(userFeatureTensor, posItemFeaturesTensor, optimizer), model.trainVars);
+        optimizer.applyGradients(grads.grads);
+        for (let key in grads.grads) {
+          grads.grads[key].dispose();
+        }
+        // --- End fix ---
+        // Return scalar loss value for UI
+        const lossVal = grads.value.dataSync()[0];
 
-        return loss.dataSync()[0];
+        userFeatureTensor.dispose();
+        posItemFeaturesTensor.dispose();
+        negItemFeaturesTensor.dispose();
+
+        return lossVal;
       });
 
       epochLossSum += lossVal;
@@ -714,3 +723,4 @@ function init() {
 }
 
 window.onload = init;
+
