@@ -43,6 +43,17 @@ class TwoTowerModel {
     this.itemMLP_b1 = tf.variable(tf.zeros([hiddenUnits]), true, 'itemMLP_b1');
     this.itemMLP_W2 = tf.variable(tf.randomNormal([hiddenUnits, embDim], 0, 0.1), true, 'itemMLP_W2');
     this.itemMLP_b2 = tf.variable(tf.zeros([embDim]), true, 'itemMLP_b2');
+
+    // Cache variables list for training convenience
+    this.trainVars = [
+      this.ageDenseW, this.ageDenseB,
+      this.genderEmbedding, this.occupationEmbedding,
+      this.userMLP_W1, this.userMLP_b1,
+      this.userMLP_W2, this.userMLP_b2,
+      this.genreEmbeddingW,
+      this.itemMLP_W1, this.itemMLP_b1,
+      this.itemMLP_W2, this.itemMLP_b2,
+    ];
   }
 
   // User forward pass: input tensor shape [batch, 3] with [ageScaled, genderIdx, occupationIdx]
@@ -98,20 +109,6 @@ class TwoTowerModel {
   trainStep(userFeatureTensor, posItemFeatureTensor, optimizer) {
     const lossType = this.lossType;
 
-    const userMLPVars = [
-      this.ageDenseW, this.ageDenseB,
-      this.genderEmbedding, this.occupationEmbedding,
-      this.userMLP_W1, this.userMLP_b1,
-      this.userMLP_W2, this.userMLP_b2,
-    ];
-    const itemMLPVars = [
-      this.genreEmbeddingW,
-      this.itemMLP_W1, this.itemMLP_b1,
-      this.itemMLP_W2, this.itemMLP_b2,
-    ];
-
-    const trainVars = userMLPVars.concat(itemMLPVars);
-
     const batchSize = userFeatureTensor.shape[0];
 
     const lossFn = () => {
@@ -138,12 +135,12 @@ class TwoTowerModel {
       throw new Error(`Unknown loss type ${lossType}`);
     };
 
-    const grads = tf.variableGrads(lossFn, trainVars);
+    const grads = tf.variableGrads(lossFn, this.trainVars);
 
     optimizer.applyGradients(grads.grads);
-    grads.dispose();
-
-    // Return scalar loss value for UI
+    for (const key in grads.grads) {
+      grads.grads[key].dispose();
+    }
     return lossFn();
   }
 }
